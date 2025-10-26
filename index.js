@@ -16,6 +16,10 @@ app.use(cors());
 // Reception routes
 app.use('/recp',verifyToken,role('reception'),ReceptionRoutes);
 
+app.use('/',(req,res)=>{
+  res.json({"message":"Welcome to ASR Lab Reception Microservice","status":"running",time : new Date().toISOString()});
+});
+
 
 
 const server = async () => {
