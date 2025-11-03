@@ -4,12 +4,26 @@ const {
   Hospital,
   PPPMode,
   PatientTest,
+  Nodal,
+  NodalHospital,
 } = require("../models/associations/associations");
 const { fn, col } = require("sequelize");
 
 //1. Get all Tests from a center
 const getCenterSample = async (req, res) => {
   try {
+    // 1. Check if the user is authenticated and has a Nodal Center Role
+    const { nodalid } = req.user;
+
+    // 2. Validate the Nodal Center Is available or not
+    const nodal = await Nodal.findByPk(nodalid);
+    if (!nodal) {
+      await transaction.rollback();
+      return res.status(400).json({
+        message: `Nodal name mismatch or not found. Please check the nodal name in the URL.`,
+      });
+    }
+
     // Get the current date in YYYY-MM-DD format
     const todayDateOnly = new Date().toLocaleDateString("en-CA", {
       timeZone: "Asia/Kolkata",
@@ -20,6 +34,7 @@ const getCenterSample = async (req, res) => {
       where: {
         status: "node",
         test_created_date: todayDateOnly,
+        nodalid: nodalid,
       },
       attributes: [
         [fn("COUNT", col("test_id")), "total_tests"],
@@ -29,12 +44,18 @@ const getCenterSample = async (req, res) => {
         {
           model: Hospital,
           as: "hospital",
+          attributes: ["id"],
+          required: true,
+        },
+        {
+          model: Nodal,
+          as: "nodal",
           attributes: [],
           required: true,
         },
       ],
 
-      group: ["hospital.hospitalname"],
+      group: ["hospital.hospitalname", "nodal.id", "hospital.id"],
     });
     if (!patientTests) {
       return res
@@ -55,15 +76,15 @@ const getCenterSample = async (req, res) => {
 // 2.Accept Sample from a centers
 const acceptCenterSample = async (req, res) => {
   try {
-    const { hospital_names } = req.body;
+    const { hospital_ids } = req.body;
 
-    if (!Array.isArray(hospital_names) || hospital_names.length === 0) {
+    if (!Array.isArray(hospital_ids) || hospital_ids.length === 0) {
       return res.status(400).json({ message: "Select at least one hospital" });
     }
 
     // Step 1: Get hospital IDs from names
     const hospitals = await Hospital.findAll({
-      where: { hospitalname: hospital_names },
+      where: { id: hospital_ids },
       attributes: ["id"],
     });
 
@@ -83,7 +104,7 @@ const acceptCenterSample = async (req, res) => {
       {
         where: {
           status: "node",
-          hospital_id: hospitalIds,
+          hospitalid: hospitalIds,
           test_created_date: todayDateOnly,
         },
       }
@@ -94,14 +115,23 @@ const acceptCenterSample = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({
-      message: err.message || "Something went wrong while accepting samples",
+      message: err.message,
     });
   }
 };
 
-/// 3. Get All Details of Accepted Samples from Diffrent Hospitals
+/// 3. Get All Details of Accepted Samples from Diffrent Hospitals that Belongs Same Nodal Center
 const allSamples = async (req, res) => {
   try {
+    const { hospitalid } = req.params;
+    /* 1. Validate Hospital ID */
+    const hospital = await Hospital.findByPk(hospitalid);
+    if (!hospital) {
+      return res.status(400).json({
+        message: `Hospital ID mismatch or not found. Please check the hospital ID in the URL.`,
+      });
+    }
+
     /* 2. Pagination Details*/
     let page = parseInt(req.query.page) || 1;
     let limit = parseInt(req.query.limit) || 10;
@@ -116,6 +146,7 @@ const allSamples = async (req, res) => {
     const { count, rows } = await Patient.findAndCountAll({
       where: {
         p_regdate: currentDate,
+        hospitalid: hospitalid,
       },
       attributes: [
         "id",
@@ -174,8 +205,8 @@ const allSamples = async (req, res) => {
           attributes: ["hospitalname"],
         },
       ],
-      limit:limit,
-      offset:offset,
+      limit: limit,
+      offset: offset,
       order: [["id", "ASC"]],
       subQuery: false,
     });
@@ -242,32 +273,50 @@ const sendTest = async (req, res) => {
   }
 };
 
-/// 5. Get all Hospitals that belongs to the same nodal center
-const getNodalHospitals = async (req, res) => {
+/// 5. Get All Nodal Centers
+const getAllNodalHospitals = async (req, res) => {
   try {
-    const { nodal_center_id } = req.params;
+    /*1. Get Nodal Hospitals According To the Nodal ID From Token */
+    const nodalId = req.user.nodalid;
 
-    const hospitals = await Hospital.findAll({
-      where: { nodal_center_id },
-      attributes: ["id", "hospitalname"],
+    /*2. Filter Out By Nodal ID */
+    const nodalHospitals = await NodalHospital.findAll({
+      where: { nodalid: nodalId },
+      include: [
+        {
+          model: Nodal,
+          as: "nodal",
+          attributes: ["nodalname", "id"],
+        },
+        {
+          model: Hospital,
+          as: "hospital",
+          attributes: ["hospitalname", "id"],
+        },
+      ],
     });
 
-    if (!hospitals || hospitals.length === 0) {
-      return res.status(404).json({
-        message: "No hospitals found for the given nodal center.",
-      });
+    if (!nodalHospitals || nodalHospitals.length === 0) {
+      return res.status(404).json({ message: "No Nodal Hospitals found" });
     }
 
-    return res.status(200).json({
-      data: hospitals,
-    });
-  } catch (error) {
-    res.status(500).json({
-      message:
-        error.message || "Something went wrong while fetching hospitals",
-    });
+    const formattedData = nodalHospitals.map((record) => ({
+      nodalname: record.nodal?.nodalname,
+      hospitalid: record.hospital?.id,
+      hospitalname: record.hospital?.hospitalname,
+      isactive: record.isactive,
+    }));
+
+    return res.status(200).json(formattedData);
+  } catch (e) {
+    return res.status(400).json({ message: `Something went wrong ${e}` });
   }
 };
 
-
-module.exports = { getCenterSample, acceptCenterSample, allSamples, sendTest };
+module.exports = {
+  getCenterSample,
+  acceptCenterSample,
+  allSamples,
+  sendTest,
+  getAllNodalHospitals,
+};

@@ -102,7 +102,7 @@ const Patient = sequelize.define(
     state: {
       type: DataTypes.STRING,
     },
-    hospital_id: {
+    hospitalid: {
       type: DataTypes.INTEGER,
       allowNull: false,
       references: {

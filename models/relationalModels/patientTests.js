@@ -7,7 +7,7 @@ const Hospital = require("../relationalModels/hospital");
 const PatientTest = sequelize.define(
   "patient_test",
   {
-    hospital_id: {
+    hospitalid: {
       type: DataTypes.INTEGER,
       references: {
         model: Hospital,
@@ -93,9 +93,7 @@ const PatientTest = sequelize.define(
       defaultValue: "center",
     },
   },
-  {
-    timestamps: false,
-  }
 );
+
 
 module.exports = PatientTest;
