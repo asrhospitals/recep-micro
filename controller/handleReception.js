@@ -37,7 +37,7 @@ const getCenterSample = async (req, res) => {
         nodalid: nodalid,
       },
       attributes: [
-        [fn("COUNT", col("test_id")), "total_tests"],
+        [fn("COUNT", col(`${PatientTest.name}.id`)), "total_tests"],
         [col("hospital.hospitalname"), "hospitalname"],
       ],
       include: [
@@ -177,7 +177,7 @@ const allSamples = async (req, res) => {
           as: "patientTests",
           where: { status: "collected", test_created_date: currentDate },
           attributes: [
-            "test_id",
+            "id",
             "status",
             "rejection_reason",
             "test_created_date",
