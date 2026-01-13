@@ -1,5 +1,5 @@
 const { DataTypes } = require("sequelize");
-const sequialize = require("../../db/dbConnection");
+const sequialize = require("../../src/db/dbConnection");
 const Nodal = require("../relationalModels/nodalMaster");
 const Hospital = require("../relationalModels/hospital");
 

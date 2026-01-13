@@ -1,5 +1,5 @@
-const sequelize = require("../../db/dbConnection");
-const { DataTypes } = require("sequelize");
+const sequelize = require("../../config/dbConnection");
+const { DataTypes, DATE } = require("sequelize");
 const Patient = require("../relationalModels/patient");
 const Investigation = require("../relationalModels/investigation");
 const Hospital = require("../relationalModels/hospital");
@@ -25,12 +25,14 @@ const PatientTest = sequelize.define("patient_test", {
       key: "id",
     },
   },
-  patient_id: {
+  pid: {
     type: DataTypes.INTEGER,
     references: {
       model: Patient,
       key: "id",
     },
+    onUpdate: "CASCADE",
+    onDelete: "CASCADE",
   },
 
   investigation_id: {
@@ -44,15 +46,7 @@ const PatientTest = sequelize.define("patient_test", {
   rejection_reason: {
     type: DataTypes.STRING,
   },
-  test_created_date: {
-    type: DataTypes.DATEONLY,
-    defaultValue: DataTypes.NOW,
-  },
 
-  test_updated_date: {
-    type: DataTypes.DATEONLY,
-    defaultValue: DataTypes.NOW,
-  },
   test_result: {
     type: DataTypes.STRING,
   },
@@ -93,7 +87,8 @@ const PatientTest = sequelize.define("patient_test", {
       "docpending",
       "completed",
       "inprogress",
-      "delivered"
+      "delivered",
+      "intransit"
     ),
     allowNull: false,
     defaultValue: "center",

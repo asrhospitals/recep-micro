@@ -1,5 +1,5 @@
 const { DataTypes } = require('sequelize');
-const sequalize=require('../../db/dbConnection');
+const sequalize=require('../../config/dbConnection');
 
 const Hospital = sequalize.define(
   "hospital",

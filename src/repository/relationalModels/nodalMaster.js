@@ -1,5 +1,5 @@
 const { DataTypes } = require('sequelize');
-const sequialize = require('../../db/dbConnection');
+const sequialize = require('../../config/dbConnection');
 
 
 const Nodal=sequialize.define('nodal',{
