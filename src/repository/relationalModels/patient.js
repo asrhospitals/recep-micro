@@ -1,6 +1,7 @@
 const { DataTypes } = require("sequelize");
-const sequelize = require("../../db/dbConnection");
+const sequelize = require("../../config/dbConnection");
 const Hospital = require("../relationalModels/hospital");
+const Nodal = require("../relationalModels/nodalMaster");
 
 const Patient = sequelize.define(
   "patient",
@@ -24,6 +25,7 @@ const Patient = sequelize.define(
     },
     p_mobile: {
       type: DataTypes.STRING,
+   
       allowNull: false,
     },
     p_regdate: {
@@ -47,7 +49,7 @@ const Patient = sequelize.define(
       allowNull: false,
     },
     p_age: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.STRING,
       allowNull: false,
     },
     p_years:{
@@ -70,6 +72,7 @@ const Patient = sequelize.define(
     },
     p_whtsap: {
       type: DataTypes.STRING,
+    
     },
     p_email: {
       type: DataTypes.STRING,
@@ -81,7 +84,8 @@ const Patient = sequelize.define(
       type: DataTypes.STRING,
     },
     p_guardianmob:{
-      type:DataTypes.INTEGER
+      type:DataTypes.STRING,
+      maxlength:10
     },
     p_guardadd:{
       type:DataTypes.STRING
@@ -102,6 +106,10 @@ const Patient = sequelize.define(
     state: {
       type: DataTypes.STRING,
     },
+    p_pincode: {
+      type: DataTypes.STRING,
+  
+    },
     hospitalid: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -110,24 +118,35 @@ const Patient = sequelize.define(
         key: "id",
       },
     },
-    reg_by: {
-      type: DataTypes.ENUM("Node", "Center"),
-      allowNull: false,
-      defaultValue: "Center",
+
+    nodalid:{
+      type:DataTypes.INTEGER,
+      references:{
+        model:Nodal,
+        key:"id"
+      }
     },
-    reg_id:{
+    uhid:{
       type: DataTypes.STRING,
-      allowNull: false,
+      unique: true,
+    },
+    p_whtsap_alart:{
+      type:DataTypes.BOOLEAN,
+    },
+    p_email_alart:{
+      type:DataTypes.BOOLEAN,
+    },
+    p_flag:{
+      type:DataTypes.INTEGER,
+    },
+    p_reg_time:{
+      type:DataTypes.TIME,
+    },
+    p_status:{
+      type:DataTypes.STRING,
+      defaultValue:"default"
     }
   },
-  {
-    timestamps: false,
-  }
 );
-
-
-
-
-
 
 module.exports = Patient;

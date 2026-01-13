@@ -1,5 +1,5 @@
 const { DataTypes } = require("sequelize");
-const sequelize = require("../../db/dbConnection");
+const sequelize = require("../../config/dbConnection");
 
 const PPModeTest = sequelize.define(
   "patient_ppp",
@@ -10,10 +10,10 @@ const PPModeTest = sequelize.define(
     pscheme: { type: DataTypes.STRING },
     refdoc: { type: DataTypes.STRING },
     pbarcode: { type: DataTypes.STRING, allowNull: false, unique: true },
-    trfno: { type: DataTypes.INTEGER, allowNull: false, unique: true },
+    trfno: { type: DataTypes.INTEGER, allowNull: true, unique: true },
     remark: { type: DataTypes.STRING, allowNull: false },
-    attatchfile: { type: DataTypes.STRING, allowNull: false },
-    patient_id: { type: DataTypes.INTEGER, allowNull: false },
+    attatchfile: { type: DataTypes.STRING },
+    pid: { type: DataTypes.INTEGER, allowNull: false },
   },
   { timestamps: false }
 );
