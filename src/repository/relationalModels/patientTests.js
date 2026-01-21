@@ -71,6 +71,9 @@ const PatientTest = sequelize.define("patient_test", {
   sample_type: {
     type: DataTypes.STRING,
   },
+  sample_collected_time: {
+    type: DataTypes.DATE,
+  },
   status: {
     type: DataTypes.ENUM(
       "collected",
