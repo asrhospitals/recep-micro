@@ -327,6 +327,8 @@ const collectSample = async (req, res) => {
 
     // 4. Automatic Update Logic
     patientTest.status = "collected"; // Hardcoded automatic update
+    const currentTime = new Date();
+    patientTest.sample_collected_time = currentTime;
 
     await patientTest.save();
 
