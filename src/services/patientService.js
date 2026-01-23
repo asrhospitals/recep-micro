@@ -20,17 +20,93 @@ async function getPatientTestData({ hospitalId }, queryParams) {
   if (!hospital) throw new Error("Hospital not found");
 
   const { limit, offset, page } = _getPagination(queryParams);
+  const { status, startDate, endDate, searchKey, dateFilter } = queryParams;
+
   const today = new Date()
     .toLocaleString("en-CA", { timeZone: "Asia/Kolkata" })
     .split(",")[0];
 
+  const whereClause = {
+    hospitalid: hospitalId,
+    p_flag: { [Op.in]: [1, 2] },
+  };
+
+  // Status Filter
+  if (status) {
+    whereClause.p_status = status;
+  } else {
+    whereClause.p_status = "default";
+  }
+
+  // Search Filter
+  if (searchKey) {
+    const searchConditions = [
+      { p_name: { [Op.iLike]: `%${searchKey}%` } },
+      { p_lname: { [Op.iLike]: `%${searchKey}%` } },
+      { uhid: { [Op.iLike]: `%${searchKey}%` } },
+      { p_mobile: { [Op.iLike]: `%${searchKey}%` } },
+      { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
+      { "$hospital.hospitalname$": { [Op.iLike]: `%${searchKey}%` } },
+      { p_status: { [Op.iLike]: `%${searchKey}%` } },
+    ];
+
+    if (!isNaN(searchKey)) {
+      searchConditions.push({ id: parseInt(searchKey) });
+    }
+
+    whereClause[Op.or] = searchConditions;
+  }
+
+  // Date Filter
+  if (dateFilter) {
+    const now = new Date();
+    const todayStr = new Date()
+      .toLocaleString("en-CA", { timeZone: "Asia/Kolkata" })
+      .split(",")[0];
+    const todayStart = new Date(`${todayStr}T00:00:00`);
+    const todayEnd = new Date(`${todayStr}T23:59:59.999`);
+
+    if (dateFilter === "today") {
+      whereClause.createdAt = { [Op.between]: [todayStart, todayEnd] };
+    } else if (dateFilter === "yesterday") {
+      const yesterdayStart = new Date(todayStart);
+      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+      const yesterdayEnd = new Date(todayEnd);
+      yesterdayEnd.setDate(yesterdayEnd.getDate() - 1);
+      whereClause.createdAt = { [Op.between]: [yesterdayStart, yesterdayEnd] };
+    } else if (dateFilter.startsWith("last_")) {
+      const days = parseInt(dateFilter.split("_")[1]);
+      if (!isNaN(days)) {
+        const start = new Date(now);
+        start.setDate(now.getDate() - days);
+        whereClause.createdAt = { [Op.gte]: start };
+      }
+    } else if (dateFilter === "custom" && startDate && endDate) {
+      whereClause.createdAt = {
+        [Op.between]: [
+          new Date(`${startDate}T00:00:00`),
+          new Date(`${endDate}T23:59:59.999`),
+        ],
+      };
+    }
+  } else if (startDate || endDate) {
+    if (startDate && endDate) {
+      whereClause.p_regdate = {
+        [Op.between]: [startDate, endDate],
+      };
+    } else if (startDate) {
+      whereClause.p_regdate = {
+        [Op.gte]: startDate,
+      };
+    } else if (endDate) {
+      whereClause.p_regdate = {
+        [Op.lte]: endDate,
+      };
+    }
+  }
+
   const { count, rows } = await Patient.findAndCountAll({
-    where: {
-      p_regdate: today,
-      hospitalid: hospitalId,
-      p_flag: { [Op.in]: [1, 2] },
-      p_status: "default",
-    },
+    where: whereClause,
     attributes: [
       "id",
       "p_name",
@@ -52,7 +128,10 @@ async function getPatientTestData({ hospitalId }, queryParams) {
   });
 
   if (!rows) throw new Error("No data available for the given criteria.");
-  return _formatPaginationResponse(rows, count, limit, page);
+
+  const processedRows = rows.map((patient) => _derivePStatus(patient));
+
+  return _formatPaginationResponse(processedRows, count, limit, page);
 }
 
 /**
@@ -96,7 +175,10 @@ async function getVerifiedPatientTestData({ hospitalId }, queryParams) {
   });
 
   if (!rows) throw new Error("No data available for the given criteria.");
-  return _formatPaginationResponse(rows, count, limit, page);
+
+  const processedRows = rows.map((patient) => _derivePStatus(patient));
+
+  return _formatPaginationResponse(processedRows, count, limit, page);
 }
 
 /**
@@ -108,16 +190,33 @@ async function getCollectedData({ hospitalId }, queryParams) {
   if (!hospital) throw new Error("Hospital not found");
 
   const { limit, offset, page } = _getPagination(queryParams);
-  const today = new Date()
-    .toLocaleString("en-CA", { timeZone: "Asia/Kolkata" })
-    .split(",")[0];
+  const { searchKey, dateFilter, startDate, endDate, status } = queryParams;
 
-  const { count, rows } = await Patient.findAndCountAll({
-    where: {
-      p_regdate: today,
-      hospitalid: hospitalId,
-      p_flag: { [Op.in]: [1, 2] },
-    },
+  const whereClause = {
+    hospitalid: hospitalId,
+    p_flag: { [Op.in]: [1, 2] },
+  };
+
+  // Search Filter
+  if (searchKey) {
+    const searchConditions = [
+      { p_name: { [Op.iLike]: `%${searchKey}%` } },
+      { p_lname: { [Op.iLike]: `%${searchKey}%` } },
+      { uhid: { [Op.iLike]: `%${searchKey}%` } },
+      { p_mobile: { [Op.iLike]: `%${searchKey}%` } },
+      { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
+      { "$hospital.hospitalname$": { [Op.iLike]: `%${searchKey}%` } },
+      { p_status: { [Op.iLike]: `%${searchKey}%` } },
+    ];
+    if (!isNaN(searchKey)) {
+      searchConditions.push({ id: parseInt(searchKey) });
+    }
+    whereClause[Op.or] = searchConditions;
+  }
+
+  // Base query options
+  const findOptions = {
+    where: whereClause,
     attributes: [
       "id",
       "p_name",
@@ -127,23 +226,66 @@ async function getCollectedData({ hospitalId }, queryParams) {
       "p_lname",
       "p_mobile",
       "uhid",
+      "p_status",
     ],
     include: _getCollectedSample(),
-    limit,
-    offset,
     order: [["id", "DESC"]],
     subQuery: false,
     distinct: true,
     col: "id",
-  });
+  };
+
+  // Pagination (Optional: return all if limit/page not provided)
+  if (queryParams.limit || queryParams.page) {
+    findOptions.limit = limit;
+    findOptions.offset = offset;
+  }
+
+  const { count, rows } = await Patient.findAndCountAll(findOptions);
 
   if (!rows) throw new Error("No data available for the given criteria.");
-  return _formatPaginationResponse(rows, count, limit, page);
+
+  // Derive pStatus for each row
+  let processedRows = rows.map((patient) => _derivePStatus(patient));
+
+  // Filter by pStatus if requested
+  if (status) {
+    processedRows = processedRows.filter(
+      (r) => r.pStatus.toLowerCase() === status.toLowerCase()
+    );
+  }
+
+  return _formatPaginationResponse(
+    processedRows,
+    status ? processedRows.length : count,
+    findOptions.limit || processedRows.length,
+    page
+  );
 }
 
 // ==========================================
 // PRIVATE HELPER LOGIC (Internal Use Only)
 // ==========================================
+
+function _derivePStatus(patient) {
+  const patientData = patient.toJSON();
+  let pStatus = patientData.p_status; // default to p_status
+
+  if (patientData.patientTests && patientData.patientTests.length > 0) {
+    const statuses = patientData.patientTests.map((t) => t.status);
+    if (statuses.every((s) => s === "delivered")) {
+      pStatus = "delivered";
+    } else if (
+      statuses.some(
+        (s) =>
+          s === "collected" || s === "intransit" || s === "inprogress"
+      )
+    ) {
+      pStatus = "collected";
+    }
+  }
+  return { ...patientData, pStatus };
+}
 
 function _getPagination(params) {
   const page = parseInt(params.page) || 1;
@@ -203,7 +345,7 @@ function _getCollectedSample() {
         },
       },
 
-      attributes: ["id", "status", "createdAt", "updatedAt"],
+      attributes: ["id", "status", "createdAt", "updatedAt", "sample_collected_time"],
       required: true,
       include: [
         {
