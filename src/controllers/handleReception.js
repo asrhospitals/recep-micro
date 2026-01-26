@@ -234,7 +234,6 @@ const getTestDataById = async (req, res) => {
               attributes: [
                 "testname",
                 "testmethod",
-                "sampletype",
                 "sampleqty",
                 "containertype",
               ],
@@ -243,6 +242,11 @@ const getTestDataById = async (req, res) => {
                   model: Department,
                   as: "department",
                   attributes: ["dptname"],
+                },
+                {
+                  model: Specimen,
+                  as: "specimen",
+                  attributes: ["specimenname"],
                 },
                 {
                   model: DerivedTestComponent,
