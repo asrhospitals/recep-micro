@@ -12,6 +12,7 @@ const Nodal = require("../relationalModels/nodalMaster");
 const ProfileInv = require("../relationalModels/profileInvMaster");
 const ProfileMaster = require("../relationalModels/profileMaster");
 const DerivedTestComponent = require("../relationalModels/derivedTestModel");
+const Specimen = require("../relationalModels/specimenTypeMaster");
 
 // Associations
 
@@ -46,6 +47,10 @@ Hospital.hasMany(Patient, { foreignKey: "hospitalid", as: "patients" });
 // Patient ↔ Nodal
 Patient.belongsTo(Nodal, { foreignKey: "nodalid", as: "nodal" });
 Nodal.hasMany(Patient, { foreignKey: "nodalid", as: "patients" });
+
+// 9. Investigation → SampleType (Specimen)
+Investigation.belongsTo(Specimen, { foreignKey: "sampletypeId" });
+Specimen.hasMany(Investigation, { foreignKey: "sampletypeId" });
 
 
 // // A single bill (OPBill) can have multiple payment details (OPPaymentDetail)

@@ -20,7 +20,7 @@ async function getPatientTestData({ hospitalId }, queryParams) {
   if (!hospital) throw new Error("Hospital not found");
 
   const { limit, offset, page } = _getPagination(queryParams);
-  const { status, startDate, endDate, searchKey, dateFilter } = queryParams;
+  const { status, startDate, endDate, searchKey } = queryParams;
 
   const today = new Date()
     .toLocaleString("en-CA", { timeZone: "Asia/Kolkata" })
@@ -57,52 +57,19 @@ async function getPatientTestData({ hospitalId }, queryParams) {
     whereClause[Op.or] = searchConditions;
   }
 
-  // Date Filter
-  if (dateFilter) {
-    const now = new Date();
-    const todayStr = new Date()
-      .toLocaleString("en-CA", { timeZone: "Asia/Kolkata" })
-      .split(",")[0];
-    const todayStart = new Date(`${todayStr}T00:00:00`);
-    const todayEnd = new Date(`${todayStr}T23:59:59.999`);
-
-    if (dateFilter === "today") {
-      whereClause.createdAt = { [Op.between]: [todayStart, todayEnd] };
-    } else if (dateFilter === "yesterday") {
-      const yesterdayStart = new Date(todayStart);
-      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-      const yesterdayEnd = new Date(todayEnd);
-      yesterdayEnd.setDate(yesterdayEnd.getDate() - 1);
-      whereClause.createdAt = { [Op.between]: [yesterdayStart, yesterdayEnd] };
-    } else if (dateFilter.startsWith("last_")) {
-      const days = parseInt(dateFilter.split("_")[1]);
-      if (!isNaN(days)) {
-        const start = new Date(now);
-        start.setDate(now.getDate() - days);
-        whereClause.createdAt = { [Op.gte]: start };
-      }
-    } else if (dateFilter === "custom" && startDate && endDate) {
-      whereClause.createdAt = {
-        [Op.between]: [
-          new Date(`${startDate}T00:00:00`),
-          new Date(`${endDate}T23:59:59.999`),
-        ],
-      };
-    }
-  } else if (startDate || endDate) {
-    if (startDate && endDate) {
-      whereClause.p_regdate = {
-        [Op.between]: [startDate, endDate],
-      };
-    } else if (startDate) {
-      whereClause.p_regdate = {
-        [Op.gte]: startDate,
-      };
-    } else if (endDate) {
-      whereClause.p_regdate = {
-        [Op.lte]: endDate,
-      };
-    }
+  // Date Filter (using p_regdate)
+  if (startDate && endDate) {
+    whereClause.p_regdate = {
+      [Op.between]: [startDate, endDate],
+    };
+  } else if (startDate) {
+    whereClause.p_regdate = {
+      [Op.gte]: startDate,
+    };
+  } else if (endDate) {
+    whereClause.p_regdate = {
+      [Op.lte]: endDate,
+    };
   }
 
   const { count, rows } = await Patient.findAndCountAll({
@@ -190,7 +157,7 @@ async function getCollectedData({ hospitalId }, queryParams) {
   if (!hospital) throw new Error("Hospital not found");
 
   const { limit, offset, page } = _getPagination(queryParams);
-  const { searchKey, dateFilter, startDate, endDate, status } = queryParams;
+  const { searchKey, startDate, endDate, status } = queryParams;
 
   const whereClause = {
     hospitalid: hospitalId,
@@ -212,6 +179,21 @@ async function getCollectedData({ hospitalId }, queryParams) {
       searchConditions.push({ id: parseInt(searchKey) });
     }
     whereClause[Op.or] = searchConditions;
+  }
+
+  // Date Filter (using p_regdate)
+  if (startDate && endDate) {
+    whereClause.p_regdate = {
+      [Op.between]: [startDate, endDate],
+    };
+  } else if (startDate) {
+    whereClause.p_regdate = {
+      [Op.gte]: startDate,
+    };
+  } else if (endDate) {
+    whereClause.p_regdate = {
+      [Op.lte]: endDate,
+    };
   }
 
   // Base query options
