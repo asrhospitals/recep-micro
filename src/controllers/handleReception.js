@@ -225,7 +225,7 @@ const getTestDataById = async (req, res) => {
         {
           model: PatientTest,
           as: "patientTests",
-          where: { status: { [Op.in]: ["center"] } },
+          where: { status: { [Op.in]: ["center", "pending"] } },
           required: false,
           attributes: ["id", "status", "createdAt","updatedAt"],
           include: [
@@ -293,7 +293,7 @@ const getTestDataById = async (req, res) => {
 };
 
 /**
- * @description Mark test as 'collected' for PPP or Bill mode.
+ * @description Mark test as 'collected' or 'collect_later' for PPP or Bill mode.
  * Restricted to Reception and Phlebotomist roles for their own hospital.
  */
 const collectSample = async (req, res) => {
@@ -310,11 +310,18 @@ const collectSample = async (req, res) => {
       });
     }
 
-    // 2. Extract identifiers from URL params
+    // 2. Extract identifiers and body
     const { pid, testid } = req.params;
+    const { action, remark } = req.body;
 
-    // 3. Find and Update in one step for better performance
-    // We look for the test matching ID, Patient, and the User's Hospital
+    if (!action || !["collect", "pending"].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid action. Must be 'collect' or 'pending'.",
+      });
+    }
+
+    // 3. Find the test record
     const patientTest = await PatientTest.findOne({
       where: {
         id: testid,
@@ -330,18 +337,61 @@ const collectSample = async (req, res) => {
       });
     }
 
-    // 4. Automatic Update Logic
-    patientTest.status = "collected"; // Hardcoded automatic update
+    // 4. Validation: Only Phlebotomist can mark pending
+    if (action === "pending" && normalizedRole !== "phlebotomist") {
+      return res.status(403).json({
+        success: false,
+        message: "Only Phlebotomists can mark tests for later collection.",
+      });
+    }
+
+    // 5. Logic based on action
     const currentTime = new Date();
-    patientTest.sample_collected_time = currentTime;
-    patientTest.collected_by = req.user.username || "unknown";
+
+    if (action === "collect") {
+      // Transition: verified -> collected OR pending -> collected
+      const validStatusesForCollect = ["center", "pending"];
+      if (!validStatusesForCollect.includes(patientTest.status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot collect sample. Current status is ${patientTest.status}.`,
+        });
+      }
+
+      patientTest.status = "collected";
+      patientTest.sample_collected_time = currentTime;
+      // Clear collect_later fields if previously set
+      patientTest.collect_later_reason = null;
+      patientTest.collect_later_marked_at = null;
+    } else if (action === "pending") {
+      // Remark is mandatory
+      if (!remark || remark.trim() === "") {
+        return res.status(400).json({
+          success: false,
+          message: "Remark is mandatory for later collection.",
+        });
+      }
+
+      // Transition: verified (center) -> pending
+      if (patientTest.status !== "center") {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot mark for later collection. Current status is ${patientTest.status}.`,
+        });
+      }
+
+      patientTest.status = "pending";
+      patientTest.collect_later_reason = remark;
+      patientTest.collect_later_marked_at = currentTime;
+    }
 
     await patientTest.save();
 
-    // 5. Success Response
     return res.status(200).json({
       success: true,
-      message: "Sample marked as collected successfully.",
+      message: `Sample marked as ${
+        action === "collect" ? "collected" : "collect later"
+      }.`,
     });
   } catch (error) {
     console.error("Collection Error:", error);
@@ -353,10 +403,58 @@ const collectSample = async (req, res) => {
 };
 
 /**
+ * @description Retrieves patients who have at least one test marked collect_later.
+ */
+const getPendingCollection = async (req, res) => {
+  try {
+    const {
+      roleType,
+      hospitalid: hospitalId,
+      nodalid: nodalId,
+    } = req.user || {};
+    const normalizedRole = roleType?.toLowerCase();
+
+    const allowedRoles = ["reception", "phlebotomist"];
+    if (!allowedRoles.includes(normalizedRole)) {
+      return res
+        .status(403)
+        .json({ message: "Access denied. Unauthorized role." });
+    }
+
+    if (!hospitalId || !nodalId) {
+      return res.status(401).json({
+        message: "Unauthorized: missing hospitalId or nodalId in token.",
+      });
+    }
+
+    const result = await patientService.getPendingCollection(
+      { hospitalId, nodalId },
+      req.query
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: result.data,
+      meta: {
+        totalItems: result.totalItems,
+        itemsPerPage: result.itemsPerPage,
+        currentPage: result.currentPage,
+        totalPages: result.totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("Get Pending Collection Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Server error: ${error.message}`,
+    });
+  }
+};
+
+/**
  * @description Show Mark test as 'collected' for PPP or Bill mode.
  * Restricted to Reception and Phlebotomist roles for their own hospital.
  */
-
 const showCollectedSample = async (req, res) => {
   try {
     const {
@@ -411,7 +509,6 @@ const showCollectedSample = async (req, res) => {
  * @description Send samples tests to Nodal ('transit') for PPP or Bill mode.
  * Restricted to Reception and Phlebotomist roles for their own hospital.
  */
-
 const sendToNodal = async (req, res) => {
   try {
     const { roleType, hospitalid: userHospitalId } = req.user;
@@ -473,6 +570,7 @@ module.exports = {
   getVerifiedTestData,
   getTestDataById,
   collectSample,
+  getPendingCollection,
   showCollectedSample,
   sendToNodal,
 };

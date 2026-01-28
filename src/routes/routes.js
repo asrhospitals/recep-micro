@@ -3,6 +3,7 @@ const {
   getTestData,
   getTestDataById,
   collectSample,
+  getPendingCollection,
   showCollectedSample,
   verifyPatient,
   getVerifiedTestData,
@@ -30,11 +31,13 @@ router.route("/verify-patient/:pid").put(verifyPatient);
 router.route("/get-verified-patient").get(getVerifiedTestData);
 // 4. Get test data by id
 router.route("/get-test-data-byid/:pid").get(getTestDataById);
-// 5. Update to Collect Test
-router.route("/collect-test/:pid/tests/:testid/collect").put(collectSample);
-// 6. Show collected sample
+// 5. Update to Collect Test (Supports action: collect | collect_later)
+router.route("/collect-test/:pid/tests/:testid").put(collectSample);
+// 6. Pending Collection Page
+router.route("/pending-collection").get(getPendingCollection);
+// 7. Show collected sample
 router.route("/show-collected-sample").get(showCollectedSample);
-// 7. Send Sample to Nodal
+// 8. Send Sample to Nodal
 router.route("/send-sample-nodal").put(sendToNodal);
 
 // 8. MIS KPIs

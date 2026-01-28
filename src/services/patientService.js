@@ -245,6 +245,94 @@ async function getCollectedData({ hospitalId }, queryParams) {
   );
 }
 
+/**
+ * DATA RETRIEVAL: Get Patients with tests marked for Later Collection
+ */
+async function getPendingCollection({ hospitalId }, queryParams) {
+  const hospital = await Hospital.findByPk(hospitalId);
+  if (!hospital) throw new Error("Hospital not found");
+
+  const { limit, offset, page } = _getPagination(queryParams);
+  const { searchKey, startDate, endDate } = queryParams;
+
+  const whereClause = {
+    hospitalid: hospitalId,
+    p_flag: { [Op.in]: [1, 2] },
+  };
+
+  // Search Filter
+  if (searchKey) {
+    const searchConditions = [
+      { p_name: { [Op.iLike]: `%${searchKey}%` } },
+      { p_lname: { [Op.iLike]: `%${searchKey}%` } },
+      { uhid: { [Op.iLike]: `%${searchKey}%` } },
+      { p_mobile: { [Op.iLike]: `%${searchKey}%` } },
+      { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
+    ];
+    if (!isNaN(searchKey)) {
+      searchConditions.push({ id: parseInt(searchKey) });
+    }
+    whereClause[Op.or] = searchConditions;
+  }
+
+  // Date Filter (using p_regdate)
+  if (startDate && endDate) {
+    whereClause.p_regdate = { [Op.between]: [startDate, endDate] };
+  } else if (startDate) {
+    whereClause.p_regdate = { [Op.gte]: startDate };
+  } else if (endDate) {
+    whereClause.p_regdate = { [Op.lte]: endDate };
+  }
+
+  const findOptions = {
+    where: whereClause,
+    attributes: [
+      "id",
+      "p_name",
+      "p_lname",
+      "p_age",
+      "p_gender",
+      "p_regdate",
+      "p_mobile",
+      "uhid",
+      "p_status",
+    ],
+    include: [
+      { model: PPPMode, as: "patientPPModes", required: !!searchKey }, // Only required if searching barcode
+      {
+        model: PatientTest,
+        as: "patientTests",
+        where: { status: "pending" },
+        required: true, // Must have at least one pending test
+        attributes: [
+          "id",
+          "status",
+          "collect_later_reason",
+          "collect_later_marked_at",
+          "createdAt",
+        ],
+        include: [
+          {
+            model: Investigation,
+            as: "investigation",
+            attributes: ["testname", "shortname", "sampleqty", "containertype"],
+          },
+        ],
+      },
+    ],
+    order: [["id", "DESC"]],
+    limit,
+    offset,
+    subQuery: false,
+    distinct: true,
+    col: "id",
+  };
+
+  const { count, rows } = await Patient.findAndCountAll(findOptions);
+
+  return _formatPaginationResponse(rows, count, limit, page);
+}
+
 // ==========================================
 // PRIVATE HELPER LOGIC (Internal Use Only)
 // ==========================================
@@ -355,4 +443,5 @@ module.exports = {
   getVerifiedPatientTestData,
   getPatientTestData,
   getCollectedData,
+  getPendingCollection
 };
