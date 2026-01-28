@@ -9,6 +9,7 @@ const {
   Result,
   Specimen
 } = require("../repository/associationModels/associations");
+const SpecimenTypeMaster = require("../repository/relationalModels/specimenTypeMaster");
 
 const patientService = require("../services/patientService");
 const { Op } = require("sequelize");
@@ -245,7 +246,7 @@ const getTestDataById = async (req, res) => {
                   attributes: ["dptname"],
                 },
                 {
-                  model: Specimen,
+                  model: SpecimenTypeMaster,
                   as: "specimen",
                   attributes: ["specimenname"],
                 },

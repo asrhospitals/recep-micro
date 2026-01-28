@@ -75,7 +75,22 @@ const PatientTest = sequelize.define("patient_test", {
     type: DataTypes.DATE,
   },
   collect_later_reason: {
-    type: DataTypes.TEXT,
+    type: DataTypes.STRING,
+  },
+  dispatch_time: {
+    type: DataTypes.DATE,
+  },
+  receive_time: {
+    type: DataTypes.DATE,
+  },
+  collected_by: {
+    type: DataTypes.STRING,
+  },
+  varified_by: {
+    type: DataTypes.STRING,
+  },
+  recollect_reason: {
+    type: DataTypes.STRING,
   },
   collect_later_marked_at: {
     type: DataTypes.DATE,
@@ -97,7 +112,7 @@ const PatientTest = sequelize.define("patient_test", {
       "completed",
       "inprogress",
       "delivered",
-      "intransit"
+      "intransit",
     ),
     allowNull: false,
     defaultValue: "center",
