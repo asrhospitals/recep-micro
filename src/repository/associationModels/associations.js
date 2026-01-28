@@ -168,6 +168,7 @@ module.exports = {
   ProfileInv,
   ProfileMaster,
   DerivedTestComponent,
+  Specimen,
 };
 
 

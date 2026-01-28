@@ -7,6 +7,7 @@ const {
   PPPMode,
   Department,
   Result,
+  Specimen
 } = require("../repository/associationModels/associations");
 
 const patientService = require("../services/patientService");
@@ -533,6 +534,7 @@ const sendToNodal = async (req, res) => {
     const [updatedCount] = await PatientTest.update(
       {
         status: "intransit",
+        dispatch_time: new Date(),
       },
       {
         where: {
