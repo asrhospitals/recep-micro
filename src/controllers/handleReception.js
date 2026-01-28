@@ -8,6 +8,7 @@ const {
   Department,
   Result,
 } = require("../repository/associationModels/associations");
+const SpecimenTypeMaster = require("../repository/relationalModels/specimenTypeMaster");
 
 const patientService = require("../services/patientService");
 const { Op } = require("sequelize");
@@ -244,7 +245,7 @@ const getTestDataById = async (req, res) => {
                   attributes: ["dptname"],
                 },
                 {
-                  model: Specimen,
+                  model: SpecimenTypeMaster,
                   as: "specimen",
                   attributes: ["specimenname"],
                 },
@@ -333,13 +334,14 @@ const collectSample = async (req, res) => {
     patientTest.status = "collected"; // Hardcoded automatic update
     const currentTime = new Date();
     patientTest.sample_collected_time = currentTime;
+    patientTest.collected_by = req.user.username || "unknown";
 
     await patientTest.save();
 
     // 5. Success Response
     return res.status(200).json({
       success: true,
-      message: "Sample marked as collected.",
+      message: "Sample marked as collected successfully.",
     });
   } catch (error) {
     console.error("Collection Error:", error);
@@ -435,6 +437,7 @@ const sendToNodal = async (req, res) => {
     const [updatedCount] = await PatientTest.update(
       {
         status: "intransit",
+        dispatch_time: new Date(),
       },
       {
         where: {

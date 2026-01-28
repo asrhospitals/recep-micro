@@ -6,6 +6,8 @@ const http = require("http");
 const PORT = process.env.PORT || 3006;
 const server = http.createServer(app);
 
+// const PatientTest = require("./src/repository/relationalModels/patientTests");
+
 const startServer = async () => {
   try {
     // 1. Database Connectivity Check
@@ -64,7 +66,7 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 
 // 3. Global Unhandled Error Catching
 process.on("unhandledRejection", (err) => {
-  console.error("UNHANDLED REJECTION! 💥 Shutting down...");
+  console.error("UNHANDLED REJECTION! Shutting down...");
   console.error(err.name, err.message);
   shutdown("UNHANDLED REJECTION");
 });

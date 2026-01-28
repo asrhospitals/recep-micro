@@ -74,6 +74,27 @@ const PatientTest = sequelize.define("patient_test", {
   sample_collected_time: {
     type: DataTypes.DATE,
   },
+  dispatch_time:{
+    type: DataTypes.DATE,
+  },
+  collect_later_marked_at:{
+    type: DataTypes.DATE,
+  },
+  collect_later_reason:{
+    type: DataTypes.STRING,
+  },
+  receive_time: {
+    type: DataTypes.DATE,
+  },
+  collected_by:{
+    type: DataTypes.STRING,
+  },
+  varified_by:{
+    type: DataTypes.STRING,
+  },
+  recollection_reason:{
+    type: DataTypes.STRING,
+  },
   status: {
     type: DataTypes.ENUM(
       "collected",
