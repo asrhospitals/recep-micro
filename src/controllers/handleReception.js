@@ -8,6 +8,7 @@ const {
   Department,
   Result,
 } = require("../repository/associationModels/associations");
+const SpecimenTypeMaster = require("../repository/relationalModels/specimenTypeMaster");
 
 const patientService = require("../services/patientService");
 const { Op } = require("sequelize");
@@ -244,7 +245,7 @@ const getTestDataById = async (req, res) => {
                   attributes: ["dptname"],
                 },
                 {
-                  model: Specimen,
+                  model: SpecimenTypeMaster,
                   as: "specimen",
                   attributes: ["specimenname"],
                 },
@@ -533,6 +534,7 @@ const sendToNodal = async (req, res) => {
     const [updatedCount] = await PatientTest.update(
       {
         status: "intransit",
+        dispatch_time: new Date(),
       },
       {
         where: {
