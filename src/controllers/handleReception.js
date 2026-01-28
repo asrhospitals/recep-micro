@@ -7,6 +7,7 @@ const {
   PPPMode,
   Department,
   Result,
+  Specimen
 } = require("../repository/associationModels/associations");
 const SpecimenTypeMaster = require("../repository/relationalModels/specimenTypeMaster");
 
