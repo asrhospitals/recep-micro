@@ -127,6 +127,53 @@ const verifyPatient = async (req, res) => {
 };
 
 /**
+ * @description Reverify patient data (for patients in pending collection).
+ * Restricted strictly to Reception and Phlebotomist roles for their own hospital.
+ */
+const reverifyPatient = async (req, res) => {
+  try {
+    const { roleType, hospitalid: hospitalId } = req.user || {};
+    const normalizedRole = roleType?.toLowerCase();
+
+    const allowedRoles = ["reception", "phlebotomist"];
+    if (!allowedRoles.includes(normalizedRole)) {
+      return res
+        .status(403)
+        .json({ message: "Access denied. Unauthorized role." });
+    }
+
+    if (!hospitalId) {
+      return res.status(401).json({
+        message: "Unauthorized: missing hospitalId in token.",
+      });
+    }
+
+    const { pid } = req.params;
+
+    const checkForPatient = await Patient.findOne({
+      where: { id: pid, hospitalid: hospitalId },
+    });
+
+    if (!checkForPatient) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Patient not found" });
+    }
+
+    checkForPatient.reverification_status = "verified";
+    await checkForPatient.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Patient re-verified successfully",
+    });
+  } catch (error) {
+    console.error("Reverify Patient Error:", error);
+    res.status(500).json({ success: false, message: "Something went wrong" });
+  }
+};
+
+/**
  * @description Get verified patient test data (PPP mode and Bill mode).
  * Restricted strictly to Reception and Phlebotomist roles for their own hospital.
  */
@@ -227,7 +274,13 @@ const getTestDataById = async (req, res) => {
           as: "patientTests",
           where: { status: { [Op.in]: ["center", "pending"] } },
           required: false,
-          attributes: ["id", "status", "createdAt","updatedAt"],
+          attributes: [
+            "id",
+            "status",
+            "collect_later_reason",
+            "createdAt",
+            "updatedAt",
+          ],
           include: [
             {
               model: Investigation,
@@ -383,6 +436,13 @@ const collectSample = async (req, res) => {
       patientTest.status = "pending";
       patientTest.collect_later_reason = remark;
       patientTest.collect_later_marked_at = currentTime;
+
+      // Set patient reverification status to 'default' when marking for later collection
+      const patient = await Patient.findByPk(pid);
+      if (patient) {
+        patient.reverification_status = "default";
+        await patient.save();
+      }
     }
 
     await patientTest.save();
