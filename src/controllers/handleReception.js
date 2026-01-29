@@ -627,6 +627,7 @@ const sendToNodal = async (req, res) => {
 module.exports = {
   getTestData,
   verifyPatient,
+  reverifyPatient,
   getVerifiedTestData,
   getTestDataById,
   collectSample,
