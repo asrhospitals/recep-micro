@@ -202,6 +202,12 @@ const getOrderToCollectionTAT = async (req, res) => {
       });
     });
 
+    // Add average minutes
+    Object.values(stats).forEach((b) => {
+      b.avgMins = b.total === 0 ? 0 : Math.round(b.totalMins / b.total);
+      delete b.totalMins;
+    });
+
     return res.json({
       success: true,
       count: patients.length, // Useful for debugging
@@ -275,7 +281,7 @@ const getDispatchToReceiptTAT = async (req, res) => {
     const testWhere = {
       hospitalid: hospitalId,
       dispatch_time: { [Op.ne]: null },
-      received_time: { [Op.ne]: null },
+      receive_time: { [Op.ne]: null },
       status: "accept",
     };
 
@@ -608,13 +614,12 @@ const recollectionSummary = async (req, res) => {
           [Op.between]: [startDate, endDate],
         },
       },
-      attributes: ["recollection_reason"],
+      attributes: ["recollect_reason"],
     });
 
     const summary = {};
     rows.forEach((r) => {
-      summary[r.recollection_reason] =
-        (summary[r.recollection_reason] || 0) + 1;
+      summary[r.rrecollect_reason] = (summary[r.recollect_reason] || 0) + 1;
     });
 
     res.json({ success: true, data: summary });
