@@ -253,12 +253,19 @@ async function getPendingCollection({ hospitalId }, queryParams) {
   if (!hospital) throw new Error("Hospital not found");
 
   const { limit, offset, page } = _getPagination(queryParams);
-  const { searchKey, startDate, endDate } = queryParams;
+  const { searchKey, startDate, endDate, status } = queryParams;
 
   const whereClause = {
     hospitalid: hospitalId,
     p_flag: { [Op.in]: [1, 2] },
   };
+
+  // Reverification Status Filter (Default to 'default' if not provided)
+  if (status) {
+    whereClause.reverification_status = status;
+  } else {
+    whereClause.reverification_status = "default";
+  }
 
   // Search Filter
   if (searchKey) {
@@ -296,6 +303,7 @@ async function getPendingCollection({ hospitalId }, queryParams) {
       "p_mobile",
       "uhid",
       "p_status",
+      "reverification_status",
     ],
     include: [
       { model: PPPMode, as: "patientPPModes", required: !!searchKey }, // Only required if searching barcode
@@ -330,7 +338,15 @@ async function getPendingCollection({ hospitalId }, queryParams) {
 
   const { count, rows } = await Patient.findAndCountAll(findOptions);
 
-  return _formatPaginationResponse(rows, count, limit, page);
+  const processedRows = rows.map((patient) => {
+    const patientData = patient.toJSON();
+    return {
+      ...patientData,
+      pStatus: patientData.reverification_status,
+    };
+  });
+
+  return _formatPaginationResponse(processedRows, count, limit, page);
 }
 
 // ==========================================
