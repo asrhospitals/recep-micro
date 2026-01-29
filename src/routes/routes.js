@@ -8,6 +8,7 @@ const {
   verifyPatient,
   getVerifiedTestData,
   sendToNodal,
+  reverifyPatient,
 } = require("../controllers/handleReception");
 const {
   kpis,
@@ -27,17 +28,19 @@ const router = Router();
 router.route("/get-center-sample").get(getTestData);
 // 2. Verify the Patient
 router.route("/verify-patient/:pid").put(verifyPatient);
-// 3. Get Verified Patient Test Data
+// 3. Re-verify the Patient (for pending collection)
+router.route("/reverify-patient/:pid").put(reverifyPatient);
+// 4. Get Verified Patient Test Data
 router.route("/get-verified-patient").get(getVerifiedTestData);
-// 4. Get test data by id
+// 5. Get test data by id
 router.route("/get-test-data-byid/:pid").get(getTestDataById);
-// 5. Update to Collect Test (Supports action: collect | collect_later)
+// 6. Update to Collect Test (Supports action: collect | collect_later)
 router.route("/collect-test/:pid/tests/:testid").put(collectSample);
-// 6. Pending Collection Page
+// 7. Pending Collection Page
 router.route("/pending-collection").get(getPendingCollection);
-// 7. Show collected sample
+// 8. Show collected sample
 router.route("/show-collected-sample").get(showCollectedSample);
-// 8. Send Sample to Nodal
+// 9. Send Sample to Nodal
 router.route("/send-sample-nodal").put(sendToNodal);
 
 // 8. MIS KPIs
