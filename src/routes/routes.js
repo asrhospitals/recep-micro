@@ -9,7 +9,8 @@ const {
   getVerifiedTestData,
   sendToNodal,
   reverifyPatient,
-  logBarcodePrint
+  logBarcodePrint,
+  checkBarcodePrintStatus
 } = require("../controllers/handleReception");
 const {
   kpis,
@@ -57,6 +58,8 @@ router.route("/show-collected-sample").get(showCollectedSample);
 router.route("/send-sample-nodal").put(sendToNodal);
 // 9. Log Barcode Print
 router.route("/log-barcode-print").post(logBarcodePrint);
+// 10. Check Barcode Print Status
+router.route("/barcodes/:barcode/check-print-status").get(checkBarcodePrintStatus);
 
 // 8. MIS KPIs
 router.route("/mis/kpis").get(kpis);

@@ -11,6 +11,8 @@ const BarcodeTraceability = sequelize.define(
     total_prints: { type: DataTypes.INTEGER, defaultValue: 1 },
     reprint_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     reprint_reasons: { type: DataTypes.JSONB, defaultValue: [] },
+    created_by: { type: DataTypes.INTEGER, allowNull: true },
+    updated_by: { type: DataTypes.INTEGER, allowNull: true },
   },
   {
     timestamps: true,
