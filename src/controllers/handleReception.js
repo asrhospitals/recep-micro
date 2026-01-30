@@ -514,6 +514,23 @@ const logBarcodePrint = async (req, res) => {
           : [],
       }, { transaction: t });
     } else {
+      // Throttling: Check if this is a duplicate call within a 5-second window
+      const now = new Date();
+      const lastUpdate = new Date(log.updatedAt);
+      const diffSeconds = (now - lastUpdate) / 1000;
+
+      // If called within 5 seconds for the same barcode/reason, skip incrementing
+      // but still return success to the frontend.
+      if (diffSeconds < 5) {
+        await t.commit();
+        return res.json({ 
+          success: true, 
+          message: "Print event already logged recently", 
+          data: log,
+          throttled: true 
+        });
+      }
+
       log.total_prints += 1;
 
       if (reprint) {
