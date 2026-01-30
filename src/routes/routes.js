@@ -33,6 +33,7 @@ const {
   getDelayTrend,
   getFilterData,
   getKPIThresholdConfig,
+  getNablComplianceSnapshot,
 } = require("../controllers/misHandle");
 const router = Router();
 
