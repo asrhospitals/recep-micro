@@ -9,6 +9,7 @@ const {
   getVerifiedTestData,
   sendToNodal,
   reverifyPatient,
+  logBarcodePrint
 } = require("../controllers/handleReception");
 const {
   kpis,
@@ -21,6 +22,17 @@ const {
   getMyPerformance,
   recollectionSummary,
   tubeWiseErrors,
+  getBarcodeSummary,
+  getTopReprintReasons,
+  getStatSummary,
+  getDelayedStatCases,
+  getDispatchSummary,
+  getDispatchThresholdInfo,
+  getHourlyCollectionLoad,
+  getRecollectionRateTrend,
+  getDelayTrend,
+  getFilterData,
+  getKPIThresholdConfig,
 } = require("../controllers/misHandle");
 const router = Router();
 
@@ -42,6 +54,8 @@ router.route("/pending-collection").get(getPendingCollection);
 router.route("/show-collected-sample").get(showCollectedSample);
 // 9. Send Sample to Nodal
 router.route("/send-sample-nodal").put(sendToNodal);
+// 9. Log Barcode Print
+router.route("/log-barcode-print").post(logBarcodePrint);
 
 // 8. MIS KPIs
 router.route("/mis/kpis").get(kpis);
@@ -63,5 +77,28 @@ router.route("/mis/phlebotomist-performance").get(getMyPerformance);
 router.route("/mis/recollection-summary").get(recollectionSummary);
 // 17. Tube Wise Errors
 router.route("/mis/tube-wise-errors").get(tubeWiseErrors);
+
+// 18. Barcode Summary
+router.route("/mis/barcode-summary").get(getBarcodeSummary);
+// 19. Top Reprint Reasons
+router.route("/mis/top-reprint-reasons").get(getTopReprintReasons);
+// 20. STAT Summary
+router.route("/mis/stat-summary").get(getStatSummary);
+// 21. Delayed STAT Cases List
+router.route("/mis/delayed-stat-cases").get(getDelayedStatCases);
+// 22. Dispatch Summary
+router.route("/mis/dispatch-summary").get(getDispatchSummary);
+// 23. Dispatch Threshold Info
+router.route("/mis/dispatch-threshold-info").get(getDispatchThresholdInfo);
+// 24. Hourly Collection Load
+router.route("/mis/hourly-collection-load").get(getHourlyCollectionLoad);
+// 25. Recollection Rate Trend
+router.route("/mis/recollection-rate-trend").get(getRecollectionRateTrend);
+// 26. Delay Trend
+router.route("/mis/delay-trend").get(getDelayTrend);
+// 27. Filter Data API
+router.route("/mis/filter-data").get(getFilterData);
+// 28. KPI Threshold Config
+router.route("/mis/kpi-threshold-config").get(getKPIThresholdConfig);
 
 module.exports = router;
