@@ -7,6 +7,7 @@ const {
   PPPMode,
   Department,
   Result,
+  BarcodeTraceability,
 } = require("../repository/associationModels/associations");
 const SpecimenTypeMaster = require("../repository/relationalModels/specimenTypeMaster");
 
@@ -467,34 +468,76 @@ const collectSample = async (req, res) => {
  * This should be called whenever a barcode is printed.
  */
 const logBarcodePrint = async (req, res) => {
+  const t = await BarcodeTraceability.sequelize.transaction();
   try {
-    const { hospitalid: hospitalId } = req.user;
-    const { pbarcode, isReprint, reason } = req.body;
+    const { hospitalid: hospitalId, id: userId } = req.user;
+    const { pbarcode, pid, isReprint, reason } = req.body;
 
-    if (!pbarcode) {
-      return res.status(400).json({ success: false, message: "Barcode is required" });
+    if (!pbarcode || !pid) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Barcode and PID are required" });
     }
 
-    const ppp = await PPPMode.findOne({ where: { pbarcode, hospitalid: hospitalId } });
-    if (!ppp) {
-      return res.status(404).json({ success: false, message: "Barcode record not found" });
+    // Validate that the patient exists and belongs to this hospital
+    const patient = await Patient.findByPk(pid);
+    if (!patient || Number(patient.hospitalid) !== Number(hospitalId)) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid patient or patient does not belong to this hospital",
+      });
     }
 
-    if (isReprint) {
-      ppp.reprint_count = (ppp.reprint_count || 0) + 1;
-      const reasons = ppp.reprint_reasons || [];
-      if (reason) reasons.push(reason);
-      ppp.reprint_reasons = reasons;
+    const reprint = isReprint === true || isReprint === "true";
+
+    if (reprint && !reason) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Reprint reason is required" });
     }
-    ppp.total_prints = (ppp.total_prints || 0) + 1;
 
-    await ppp.save();
+    let log = await BarcodeTraceability.findOne({
+      where: { barcode: pbarcode, hospitalid: hospitalId }, // 🔥 hospital level uniqueness
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
 
-    return res.json({ success: true, message: "Print event logged" });
+    if (!log) {
+      log = await BarcodeTraceability.create({
+        barcode: pbarcode,
+        pid, // stored only for reference
+        hospitalid: hospitalId,
+        total_prints: 1,
+        reprint_count: reprint ? 1 : 0,
+        reprint_reasons: reprint
+          ? [{ reason, printed_at: new Date(), printed_by: userId }]
+          : [],
+      }, { transaction: t });
+    } else {
+      log.total_prints += 1;
+
+      if (reprint) {
+        log.reprint_count += 1;
+
+        const reasons = Array.isArray(log.reprint_reasons) ? [...log.reprint_reasons] : [];
+        reasons.push({ reason, printed_at: new Date(), printed_by: userId });
+        log.reprint_reasons = reasons;
+      }
+
+      await log.save({ transaction: t });
+    }
+
+    await t.commit();
+    await log.reload();
+
+    return res.json({ success: true, message: "Print event logged successfully", data: log });
+
   } catch (error) {
+    await t.rollback();
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+
 
 /**
  * @description Retrieves patients who have at least one test marked collect_later.
