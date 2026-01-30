@@ -733,57 +733,6 @@ const tubeWiseErrors = async (req, res) => {
 
 /* Barcode & Traceability Monitor */
 
-// API: Log Barcode Print/Reprint (for Frontend Integration)
-const logBarcodePrint = async (req, res) => {
-  try {
-    const { barcode, pid, reason, isReprint } = req.body;
-    const { hospitalid: hospitalId } = req.user;
-
-    if (!barcode || !pid) {
-      return res.status(400).json({ success: false, message: "Barcode and PID are required." });
-    }
-
-    let log = await BarcodeTraceability.findOne({
-      where: { barcode, pid, hospitalid: hospitalId },
-    });
-
-    if (!log) {
-      log = await BarcodeTraceability.create({
-        barcode,
-        pid,
-        hospitalid: hospitalId,
-        total_prints: 1,
-        reprint_count: 0,
-        reprint_reasons: [],
-      });
-    } else {
-      if (isReprint) {
-        const reasons = log.reprint_reasons || [];
-        if (reason) reasons.push(reason);
-
-        await log.update({
-          total_prints: log.total_prints + 1,
-          reprint_count: log.reprint_count + 1,
-          reprint_reasons: reasons,
-        });
-      } else {
-        await log.update({
-          total_prints: log.total_prints + 1,
-        });
-      }
-    }
-
-    return res.json({
-      success: true,
-      message: "Barcode print logged successfully.",
-      data: log,
-    });
-  } catch (error) {
-    console.error("LOG BARCODE ERROR:", error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
 // API 1: Barcode Summary
 const getBarcodeSummary = async (req, res) => {
   try {
@@ -1120,7 +1069,7 @@ const getDispatchSummary = async (req, res) => {
         sample_collected_time: { [Op.ne]: null },
         dispatch_time: null,
         [Op.and]: sequelize.literal(
-          `EXTRACT(EPOCH FROM (NOW() - sample_collected_time))/60 > ${thresholdMinutes}`
+          `EXTRACT(EPOCH FROM (NOW() - "patient_test"."sample_collected_time"))/60 > ${thresholdMinutes}`
         ),
       },
       include: commonInclude,
@@ -1140,7 +1089,7 @@ const getDispatchSummary = async (req, res) => {
         status: "intransit",
         dispatch_time: { [Op.ne]: null },
         [Op.and]: sequelize.literal(
-          `EXTRACT(EPOCH FROM (NOW() - dispatch_time))/60 > 60` // Assume 60 min transit threshold
+          `EXTRACT(EPOCH FROM (NOW() - "patient_test"."dispatch_time"))/60 > 60` // Assume 60 min transit threshold
         ),
       },
       include: commonInclude,
@@ -1197,7 +1146,7 @@ const getHourlyCollectionLoad = async (req, res) => {
       },
       raw: true,
       attributes: [
-        [sequelize.fn("EXTRACT", sequelize.literal("HOUR FROM sample_collected_time")), "hour"],
+        [sequelize.fn("EXTRACT", sequelize.literal('HOUR FROM "patient_test"."sample_collected_time"')), "hour"],
         [sequelize.fn("COUNT", sequelize.col("patient_test.id")), "count"],
       ],
       include: [
@@ -1260,7 +1209,7 @@ const getRecollectionRateTrend = async (req, res) => {
         [
           sequelize.fn(
             "SUM",
-            sequelize.literal("CASE WHEN status = 'recollect' THEN 1 ELSE 0 END")
+            sequelize.literal("CASE WHEN \"patient_test\".\"status\" = 'recollect' THEN 1 ELSE 0 END")
           ),
           "recollectCount",
         ],
@@ -1360,7 +1309,7 @@ const getDelayTrend = async (req, res) => {
           sequelize.fn(
             "AVG",
             sequelize.literal(
-              'EXTRACT(EPOCH FROM (sample_collected_time - "patient_test"."createdAt"))/60'
+              'EXTRACT(EPOCH FROM ("patient_test"."sample_collected_time" - "patient_test"."createdAt"))/60'
             )
           ),
           "avgDelay",
@@ -1495,6 +1444,5 @@ module.exports = {
   getRecollectionRateTrend,
   getDelayTrend,
   getFilterData,
-  getKPIThresholdConfig,
-  logBarcodePrint
+  getKPIThresholdConfig
 };
