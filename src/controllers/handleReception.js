@@ -463,6 +463,40 @@ const collectSample = async (req, res) => {
 };
 
 /**
+ * @description Log barcode print/reprint for MIS tracking.
+ * This should be called whenever a barcode is printed.
+ */
+const logBarcodePrint = async (req, res) => {
+  try {
+    const { hospitalid: hospitalId } = req.user;
+    const { pbarcode, isReprint, reason } = req.body;
+
+    if (!pbarcode) {
+      return res.status(400).json({ success: false, message: "Barcode is required" });
+    }
+
+    const ppp = await PPPMode.findOne({ where: { pbarcode, hospitalid: hospitalId } });
+    if (!ppp) {
+      return res.status(404).json({ success: false, message: "Barcode record not found" });
+    }
+
+    if (isReprint) {
+      ppp.reprint_count = (ppp.reprint_count || 0) + 1;
+      const reasons = ppp.reprint_reasons || [];
+      if (reason) reasons.push(reason);
+      ppp.reprint_reasons = reasons;
+    }
+    ppp.total_prints = (ppp.total_prints || 0) + 1;
+
+    await ppp.save();
+
+    return res.json({ success: true, message: "Print event logged" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
  * @description Retrieves patients who have at least one test marked collect_later.
  */
 const getPendingCollection = async (req, res) => {
@@ -634,4 +668,5 @@ module.exports = {
   getPendingCollection,
   showCollectedSample,
   sendToNodal,
+  logBarcodePrint,
 };
