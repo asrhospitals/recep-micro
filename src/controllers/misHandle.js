@@ -1112,13 +1112,59 @@ const getDispatchSummary = async (req, res) => {
 // API 6: Dispatch Threshold Info
 const getDispatchThresholdInfo = async (req, res) => {
   try {
-    const dispatchThresholdMinutes = 30;
-    // Simple logic for status color
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const thresholdMinutes = 30;
+
+    const delayedCount = await PatientTest.count({
+      where: {
+        ...testWhere,
+        sample_collected_time: { [Op.ne]: null },
+        dispatch_time: null,
+        [Op.and]: sequelize.literal(
+          `EXTRACT(EPOCH FROM (NOW() - "patient_test"."sample_collected_time"))/60 > ${thresholdMinutes}`
+        ),
+      },
+      include: [
+        {
+          model: Investigation,
+          as: "investigation",
+          where: investigationWhere,
+          required: true,
+        },
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          include: [
+            {
+              model: PPPMode,
+              as: "patientPPModes",
+              where: pppWhere,
+              required: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    let status = "GREEN";
+    if (delayedCount > 10) status = "RED";
+    else if (delayedCount > 5) status = "AMBER";
+
     res.json({
       success: true,
       data: {
-        dispatchThresholdMinutes,
-        status: "GREEN",
+        dispatchThresholdMinutes: thresholdMinutes,
+        status,
+        delayedCount,
       },
     });
   } catch (error) {
