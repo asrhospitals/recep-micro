@@ -742,16 +742,12 @@ const getBarcodeSummary = async (req, res) => {
       investigationWhere,
     } = buildCommonFilters(req.query, hospitalId);
 
-    // Filter BarcodeTraceability by date range if provided
     const barcodeDateFilter = buildDateRange(startDate, endDate, "createdAt");
 
-    const data = await BarcodeTraceability.findAll({
+    // 1. Get unique BarcodeTraceability IDs that match all filters
+    const matchingRecords = await BarcodeTraceability.findAll({
       where: { ...barcodeDateFilter, hospitalid: hospitalId },
-      raw: true,
-      attributes: [
-        [sequelize.fn("SUM", sequelize.col("total_prints")), "totalPrinted"],
-        [sequelize.fn("SUM", sequelize.col("reprint_count")), "reprints"],
-      ],
+      attributes: ["id"],
       include: [
         {
           model: Patient,
@@ -779,10 +775,28 @@ const getBarcodeSummary = async (req, res) => {
           ],
         },
       ],
+      raw: true,
     });
 
-    const totalPrinted = Number(data[0].totalPrinted) || 0;
-    const reprints = Number(data[0].reprints) || 0;
+    const uniqueIds = [...new Set(matchingRecords.map((r) => r.id))];
+
+    let totalPrinted = 0;
+    let reprints = 0;
+
+    if (uniqueIds.length > 0) {
+      // 2. Perform Database Aggregation on unique IDs to avoid duplication from joins
+      const summary = await BarcodeTraceability.findOne({
+        where: { id: uniqueIds },
+        attributes: [
+          [sequelize.fn("SUM", sequelize.col("total_prints")), "totalPrinted"],
+          [sequelize.fn("SUM", sequelize.col("reprint_count")), "reprints"],
+        ],
+        raw: true,
+      });
+
+      totalPrinted = Number(summary.totalPrinted) || 0;
+      reprints = Number(summary.reprints) || 0;
+    }
     const reprintPercent =
       totalPrinted === 0 ? 0 : Number(((reprints / totalPrinted) * 100).toFixed(2));
 
@@ -815,51 +829,70 @@ const getTopReprintReasons = async (req, res) => {
 
     const barcodeDateFilter = buildDateRange(startDate, endDate, "createdAt");
 
-    const records = await BarcodeTraceability.findAll({
+    // 1. Get unique IDs for records with reprints
+    const matchingRecords = await BarcodeTraceability.findAll({
       where: {
         ...barcodeDateFilter,
         hospitalid: hospitalId,
         reprint_count: { [Op.gt]: 0 },
       },
-      attributes: ["reprint_reasons"],
+      attributes: ["id"],
       include: [
         {
           model: Patient,
           as: "patient",
           where: patientWhere,
           required: true,
+          attributes: [],
           include: [
             {
               model: PatientTest,
               as: "patientTests",
               where: testWhere,
               required: true,
+              attributes: [],
               include: [
                 {
                   model: Investigation,
                   as: "investigation",
                   where: investigationWhere,
                   required: true,
+                  attributes: [],
                 },
               ],
             },
           ],
         },
       ],
+      raw: true,
     });
 
+    const uniqueIds = [...new Set(matchingRecords.map((r) => r.id))];
+
     const reasonCounts = {};
-    records.forEach((rec) => {
-      const reasons = rec.reprint_reasons || [];
-      reasons.forEach((reason) => {
-        reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+
+    if (uniqueIds.length > 0) {
+      // 2. Fetch reasons for these unique IDs only
+      const records = await BarcodeTraceability.findAll({
+        where: { id: uniqueIds },
+        attributes: ["reprint_reasons"],
+        raw: true,
       });
-    });
+
+      records.forEach((rec) => {
+        const reasons = rec.reprint_reasons || [];
+        reasons.forEach((entry) => {
+          // Fix for [object Object] - extract the reason text
+          const reasonText = typeof entry === "string" ? entry : entry.reason || "Unknown";
+          reasonCounts[reasonText] = (reasonCounts[reasonText] || 0) + 1;
+        });
+      });
+    }
 
     const sortedReasons = Object.entries(reasonCounts)
       .map(([reason, count]) => ({ reason, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+      .slice(0, 3); // Return only top 3 reasons as per requirements
 
     res.json({
       success: true,
