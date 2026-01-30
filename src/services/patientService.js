@@ -217,33 +217,29 @@ async function getCollectedData({ hospitalId }, queryParams) {
     col: "id",
   };
 
-  // Pagination (Optional: return all if limit/page not provided)
-  if (queryParams.limit || queryParams.page) {
-    findOptions.limit = limit;
-    findOptions.offset = offset;
-  }
+  // // Pagination (Optional: return all if limit/page not provided)
+  // if (queryParams.limit || queryParams.page) {
+  //   findOptions.limit = limit;
+  //   findOptions.offset = offset;
+  // }
 
-  const { count, rows } = await Patient.findAndCountAll(findOptions);
+  // const { count, rows } = await Patient.findAndCountAll(findOptions);
+
+  const rows = await Patient.findAll(findOptions);
 
   if (!rows) throw new Error("No data available for the given criteria.");
 
   // Derive pStatus for each row
   let processedRows = rows.map((patient) => _derivePStatus(patient));
 
-  // Filter by pStatus if requested
-  if (status) {
-    processedRows = processedRows.filter(
-      (r) => r.pStatus.toLowerCase() === status.toLowerCase()
-    );
-  }
+  const totalItems = processedRows.length;
+  const start = (page - 1) * limit;
+  const paginatedRows = processedRows.slice(start, start + limit);
 
-  return _formatPaginationResponse(
-    processedRows,
-    status ? processedRows.length : count,
-    findOptions.limit || processedRows.length,
-    page
-  );
+  return _formatPaginationResponse(paginatedRows, totalItems, limit, page);
 }
+
+
 
 /**
  * DATA RETRIEVAL: Get Patients with tests marked for Later Collection

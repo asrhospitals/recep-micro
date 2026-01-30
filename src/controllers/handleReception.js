@@ -414,6 +414,7 @@ const collectSample = async (req, res) => {
 
       patientTest.status = "collected";
       patientTest.sample_collected_time = currentTime;
+      patientTest.collected_by=req.user.username;
       // Clear collect_later fields if previously set
       patientTest.collect_later_reason = null;
       patientTest.collect_later_marked_at = null;
