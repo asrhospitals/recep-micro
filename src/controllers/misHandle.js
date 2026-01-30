@@ -576,13 +576,11 @@ const avgDispatchDelay = async (req, res) => {
 
 const getMyPerformance = async (req, res) => {
   try {
-    // 1. Get current Phlebotomist ID from token
     const hospitalId = req.user.hospitalid;
     const { startDate, endDate } = req.query;
 
     const patientWhere = { hospitalid: hospitalId };
 
-    // Apply Date Filter
     if (startDate && endDate) {
       patientWhere.p_regdate = {
         [Op.between]: [
@@ -594,73 +592,73 @@ const getMyPerformance = async (req, res) => {
 
     const patients = await Patient.findAll({
       where: patientWhere,
-      attributes: ["createdAt", "p_regdate", "id"],
+      attributes: ["createdAt", "id"],
       include: [
         {
           model: PatientTest,
           as: "patientTests",
           required: true,
-          // Only fetch tests assigned to the logged-in user
-          where: { collected_by: req.user.username },
-          attributes: ["status", "sample_collected_time"],
+          attributes: [
+            "status",
+            "sample_collected_time",
+            "collected_by",
+          ],
         },
       ],
     });
 
-    // 2. Initialize Stats
-    let stats = {
-      assigned: 0,
-      collected: 0,
-      pending: 0,
-      recollectCount: 0,
-      totalMins: 0,
-      avgCollectionTime: 0,
-      recollectPercent: 0,
-    };
+    const statsMap = {};
 
-    // 3. Process Data
     patients.forEach((patient) => {
       patient.patientTests.forEach((test) => {
-        stats.assigned++;
+        const user = test.collected_by || "Unassigned";
 
-        if (test.status === "recollect") {
-          stats.recollectCount++;
+        if (!statsMap[user]) {
+          statsMap[user] = {
+            collected_by: user,
+            assigned: 0,
+            collected: 0,
+            pending: 0,
+            recollectCount: 0,
+            totalMins: 0,
+          };
         }
 
-        if (test.sample_collected_time) {
-          stats.collected++;
+        const s = statsMap[user];
+        s.assigned++;
 
-          // Calculate TAT: Collection - Registration
-          const diff = Math.round(
+        if (test.status === "recollect") s.recollectCount++;
+
+        if (test.sample_collected_time) {
+          s.collected++;
+          const diff =
             (new Date(test.sample_collected_time) -
               new Date(patient.createdAt)) /
-              60000,
-          );
-          if (diff >= 0) stats.totalMins += diff;
+            60000;
+          if (diff >= 0) s.totalMins += diff;
         }
       });
     });
 
-    // 4. Final Math
-    stats.pending = stats.assigned - stats.collected;
-    stats.avgCollectionTime =
-      stats.collected > 0 ? Math.round(stats.totalMins / stats.collected) : 0;
-    stats.recollectPercent =
-      stats.collected > 0
-        ? Number(((stats.recollectCount / stats.collected) * 100).toFixed(2))
-        : 0;
+    const result = Object.values(statsMap).map((s) => {
+      s.pending = s.assigned - s.collected;
+      s.avgCollectionTime =
+        s.collected > 0 ? Math.round(s.totalMins / s.collected) : 0;
+      s.recollectPercent =
+        s.collected > 0
+          ? Number(((s.recollectCount / s.collected) * 100).toFixed(2))
+          : 0;
 
-    // Remove internal helper
-    delete stats.totalMins;
-
-    return res.json({
-      success: true,
-      data: stats,
+      delete s.totalMins;
+      return s;
     });
+
+    return res.json({ success: true, data: result });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 // 5. RECOLLECTION & ERROR ANALYSIS (NABL GOLD)
 /* Recollection Summary */
@@ -1490,5 +1488,5 @@ module.exports = {
   getRecollectionRateTrend,
   getDelayTrend,
   getFilterData,
-  getKPIThresholdConfig
+  getKPIThresholdConfig,
 };
