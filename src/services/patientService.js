@@ -325,14 +325,14 @@ async function getPendingCollection({ hospitalId }, queryParams) {
       },
     ],
     order: [["id", "DESC"]],
-    limit,
-    offset,
     subQuery: false,
     distinct: true,
     col: "id",
   };
 
-  const { count, rows } = await Patient.findAndCountAll(findOptions);
+  const rows = await Patient.findAll(findOptions);
+
+  if (!rows) throw new Error("No data available for the given criteria.");
 
   const processedRows = rows.map((patient) => {
     const patientData = patient.toJSON();
@@ -342,7 +342,11 @@ async function getPendingCollection({ hospitalId }, queryParams) {
     };
   });
 
-  return _formatPaginationResponse(processedRows, count, limit, page);
+  const totalItems = processedRows.length;
+  const start = (page - 1) * limit;
+  const paginatedRows = processedRows.slice(start, start + limit);
+
+  return _formatPaginationResponse(paginatedRows, totalItems, limit, page);
 }
 
 // ==========================================
