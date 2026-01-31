@@ -1223,7 +1223,7 @@ const getHourlyCollectionLoad = async (req, res) => {
       },
       raw: true,
       attributes: [
-        [sequelize.fn("EXTRACT", sequelize.literal('HOUR FROM "patient_test"."sample_collected_time"')), "hour"],
+        [sequelize.fn("EXTRACT", sequelize.literal('HOUR FROM "patient_test"."sample_collected_time" AT TIME ZONE \'Asia/Kolkata\'')), "hour"],
         [sequelize.fn("COUNT", sequelize.col("patient_test.id")), "count"],
       ],
       include: [
