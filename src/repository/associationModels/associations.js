@@ -13,6 +13,7 @@ const ProfileInv = require("../relationalModels/profileInvMaster");
 const ProfileMaster = require("../relationalModels/profileMaster");
 const DerivedTestComponent = require("../relationalModels/derivedTestModel");
 const Specimen = require("../relationalModels/specimenTypeMaster");
+const BarcodeTraceability = require("../relationalModels/barcodeTraceability");
 
 // Associations
 
@@ -47,6 +48,10 @@ Hospital.hasMany(Patient, { foreignKey: "hospitalid", as: "patients" });
 // Patient ↔ Nodal
 Patient.belongsTo(Nodal, { foreignKey: "nodalid", as: "nodal" });
 Nodal.hasMany(Patient, { foreignKey: "nodalid", as: "patients" });
+
+// Nodal ↔ PatientTest
+Nodal.hasMany(PatientTest, { foreignKey: "nodalid", as: "nodalTests" });
+PatientTest.belongsTo(Nodal, { foreignKey: "nodalid", as: "nodal" });
 
 // 9. Investigation → SampleType (Specimen)
 Investigation.belongsTo(Specimen, { foreignKey: "sampletypeId" });
@@ -153,6 +158,13 @@ DerivedTestComponent.belongsTo(Investigation, {
   as: "childTest",
 });
 
+// BarcodeTraceability Associations
+BarcodeTraceability.belongsTo(Patient, { foreignKey: "pid", as: "patient" });
+Patient.hasMany(BarcodeTraceability, { foreignKey: "pid", as: "barcodeHistory" });
+
+BarcodeTraceability.belongsTo(Hospital, { foreignKey: "hospitalid", as: "hospital" });
+Hospital.hasMany(BarcodeTraceability, { foreignKey: "hospitalid", as: "barcodeTraceabilities" });
+
 module.exports = {
   Patient,
   Investigation,
@@ -168,6 +180,7 @@ module.exports = {
   ProfileInv,
   ProfileMaster,
   DerivedTestComponent,
+  BarcodeTraceability,
 };
 
 

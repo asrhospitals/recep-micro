@@ -1,9 +1,14 @@
 const { Op } = require("sequelize");
+const sequelize = require("../config/dbConnection");
 const {
   Patient,
   PatientTest,
   PPPMode,
   Investigation,
+  Hospital,
+  Department,
+  Nodal,
+  BarcodeTraceability,
 } = require("../repository/associationModels/associations");
 
 /**
@@ -20,6 +25,63 @@ const buildDateRange = (startDate, endDate, column) => {
       ],
     },
   };
+};
+
+/**
+ * Utility to build common filters for MIS APIs
+ */
+const buildCommonFilters = (query, hospitalId) => {
+  const {
+    startDate,
+    endDate,
+    locationType,
+    departmentId,
+    collectionCenterId,
+    phlebotomist,
+    priority,
+  } = query;
+
+  const testWhere = { hospitalid: hospitalId };
+  const patientWhere = { hospitalid: hospitalId };
+  const investigationWhere = {};
+  const pppWhere = {};
+
+  // Date range filter
+  if (startDate && endDate) {
+    testWhere.createdAt = {
+      [Op.between]: [
+        new Date(`${startDate} 00:00:00`),
+        new Date(`${endDate} 23:59:59`),
+      ],
+    };
+  }
+
+  // Location Type (OPD/IPD/Home) -> mapped from PPPMode.pop
+  if (locationType) {
+    pppWhere.pop = locationType;
+  }
+
+  // Department
+  if (departmentId) {
+    investigationWhere.departmentId = departmentId;
+  }
+
+  // Collection Center -> mapped from nodalid
+  if (collectionCenterId) {
+    testWhere.nodalid = collectionCenterId;
+  }
+
+  // Phlebotomist -> mapped from collected_by
+  if (phlebotomist) {
+    testWhere.collected_by = phlebotomist;
+  }
+
+  // Priority (STAT / Routine)
+  if (priority) {
+    investigationWhere.stattest = priority.toLowerCase() === "stat";
+  }
+
+  return { testWhere, patientWhere, investigationWhere, pppWhere };
 };
 
 // 1. KPI STRIP
@@ -514,13 +576,11 @@ const avgDispatchDelay = async (req, res) => {
 
 const getMyPerformance = async (req, res) => {
   try {
-    // 1. Get current Phlebotomist ID from token
     const hospitalId = req.user.hospitalid;
     const { startDate, endDate } = req.query;
 
     const patientWhere = { hospitalid: hospitalId };
 
-    // Apply Date Filter
     if (startDate && endDate) {
       patientWhere.p_regdate = {
         [Op.between]: [
@@ -532,73 +592,73 @@ const getMyPerformance = async (req, res) => {
 
     const patients = await Patient.findAll({
       where: patientWhere,
-      attributes: ["createdAt", "p_regdate", "id"],
+      attributes: ["createdAt", "id"],
       include: [
         {
           model: PatientTest,
           as: "patientTests",
           required: true,
-          // Only fetch tests assigned to the logged-in user
-          where: { collected_by: req.user.username },
-          attributes: ["status", "sample_collected_time"],
+          attributes: [
+            "status",
+            "sample_collected_time",
+            "collected_by",
+          ],
         },
       ],
     });
 
-    // 2. Initialize Stats
-    let stats = {
-      assigned: 0,
-      collected: 0,
-      pending: 0,
-      recollectCount: 0,
-      totalMins: 0,
-      avgCollectionTime: 0,
-      recollectPercent: 0,
-    };
+    const statsMap = {};
 
-    // 3. Process Data
     patients.forEach((patient) => {
       patient.patientTests.forEach((test) => {
-        stats.assigned++;
+        const user = test.collected_by || "Unassigned";
 
-        if (test.status === "recollect") {
-          stats.recollectCount++;
+        if (!statsMap[user]) {
+          statsMap[user] = {
+            collected_by: user,
+            assigned: 0,
+            collected: 0,
+            pending: 0,
+            recollectCount: 0,
+            totalMins: 0,
+          };
         }
 
-        if (test.sample_collected_time) {
-          stats.collected++;
+        const s = statsMap[user];
+        s.assigned++;
 
-          // Calculate TAT: Collection - Registration
-          const diff = Math.round(
+        if (test.status === "recollect") s.recollectCount++;
+
+        if (test.sample_collected_time) {
+          s.collected++;
+          const diff =
             (new Date(test.sample_collected_time) -
               new Date(patient.createdAt)) /
-              60000,
-          );
-          if (diff >= 0) stats.totalMins += diff;
+            60000;
+          if (diff >= 0) s.totalMins += diff;
         }
       });
     });
 
-    // 4. Final Math
-    stats.pending = stats.assigned - stats.collected;
-    stats.avgCollectionTime =
-      stats.collected > 0 ? Math.round(stats.totalMins / stats.collected) : 0;
-    stats.recollectPercent =
-      stats.collected > 0
-        ? Number(((stats.recollectCount / stats.collected) * 100).toFixed(2))
-        : 0;
+    const result = Object.values(statsMap).map((s) => {
+      s.pending = s.assigned - s.collected;
+      s.avgCollectionTime =
+        s.collected > 0 ? Math.round(s.totalMins / s.collected) : 0;
+      s.recollectPercent =
+        s.collected > 0
+          ? Number(((s.recollectCount / s.collected) * 100).toFixed(2))
+          : 0;
 
-    // Remove internal helper
-    delete stats.totalMins;
-
-    return res.json({
-      success: true,
-      data: stats,
+      delete s.totalMins;
+      return s;
     });
+
+    return res.json({ success: true, data: result });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 // 5. RECOLLECTION & ERROR ANALYSIS (NABL GOLD)
 /* Recollection Summary */
@@ -669,6 +729,777 @@ const tubeWiseErrors = async (req, res) => {
   }
 };
 
+/* Barcode & Traceability Monitor */
+
+// API 1: Barcode Summary
+const getBarcodeSummary = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const { startDate, endDate } = req.query;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const barcodeDateFilter = buildDateRange(startDate, endDate, "createdAt");
+
+    // 1. Get unique BarcodeTraceability IDs that match all filters
+    const matchingRecords = await BarcodeTraceability.findAll({
+      where: { ...barcodeDateFilter, hospitalid: hospitalId },
+      attributes: ["id"],
+      include: [
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          attributes: [],
+          include: [
+            {
+              model: PatientTest,
+              as: "patientTests",
+              where: testWhere,
+              required: true,
+              attributes: [],
+              include: [
+                {
+                  model: Investigation,
+                  as: "investigation",
+                  where: investigationWhere,
+                  required: true,
+                  attributes: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      raw: true,
+    });
+
+    const uniqueIds = [...new Set(matchingRecords.map((r) => r.id))];
+
+    let totalPrinted = 0;
+    let reprints = 0;
+
+    if (uniqueIds.length > 0) {
+      // 2. Perform Database Aggregation on unique IDs to avoid duplication from joins
+      const summary = await BarcodeTraceability.findOne({
+        where: { id: uniqueIds },
+        attributes: [
+          [sequelize.fn("SUM", sequelize.col("total_prints")), "totalPrinted"],
+          [sequelize.fn("SUM", sequelize.col("reprint_count")), "reprints"],
+        ],
+        raw: true,
+      });
+
+      totalPrinted = Number(summary.totalPrinted) || 0;
+      reprints = Number(summary.reprints) || 0;
+    }
+    const reprintPercent =
+      totalPrinted === 0 ? 0 : Number(((reprints / totalPrinted) * 100).toFixed(2));
+
+    const targetPercent = 5;
+
+    res.json({
+      success: true,
+      data: {
+        totalPrinted,
+        reprints,
+        reprintPercent,
+        targetPercent,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// API 2: Top Reprint Reasons
+const getTopReprintReasons = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const { startDate, endDate } = req.query;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const barcodeDateFilter = buildDateRange(startDate, endDate, "createdAt");
+
+    // 1. Get unique IDs for records with reprints
+    const matchingRecords = await BarcodeTraceability.findAll({
+      where: {
+        ...barcodeDateFilter,
+        hospitalid: hospitalId,
+        reprint_count: { [Op.gt]: 0 },
+      },
+      attributes: ["id"],
+      include: [
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          attributes: [],
+          include: [
+            {
+              model: PatientTest,
+              as: "patientTests",
+              where: testWhere,
+              required: true,
+              attributes: [],
+              include: [
+                {
+                  model: Investigation,
+                  as: "investigation",
+                  where: investigationWhere,
+                  required: true,
+                  attributes: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      raw: true,
+    });
+
+    const uniqueIds = [...new Set(matchingRecords.map((r) => r.id))];
+
+    const reasonCounts = {};
+
+    if (uniqueIds.length > 0) {
+      // 2. Fetch reasons for these unique IDs only
+      const records = await BarcodeTraceability.findAll({
+        where: { id: uniqueIds },
+        attributes: ["reprint_reasons"],
+        raw: true,
+      });
+
+      records.forEach((rec) => {
+        const reasons = rec.reprint_reasons || [];
+        reasons.forEach((entry) => {
+          // Fix for [object Object] - extract the reason text
+          const reasonText = typeof entry === "string" ? entry : entry.reason || "Unknown";
+          reasonCounts[reasonText] = (reasonCounts[reasonText] || 0) + 1;
+        });
+      });
+    }
+
+    const sortedReasons = Object.entries(reasonCounts)
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3); // Return only top 3 reasons as per requirements
+
+    res.json({
+      success: true,
+      data: sortedReasons,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* STAT & Critical Sample Tracking */
+
+// API 3: STAT Summary
+const getStatSummary = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const statTests = await PatientTest.findAll({
+      where: testWhere,
+      include: [
+        {
+          model: Investigation,
+          as: "investigation",
+          where: { ...investigationWhere, stattest: true },
+          attributes: ["stattest"],
+          required: true,
+        },
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          attributes: ["createdAt"],
+          include: [
+            {
+              model: PPPMode,
+              as: "patientPPModes",
+              where: pppWhere,
+              required: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    const totalStat = statTests.length;
+    let collectedWithin15Min = 0;
+    let delayedCount = 0;
+
+    statTests.forEach((t) => {
+      if (t.sample_collected_time && t.patient?.createdAt) {
+        const mins = Math.round(
+          (new Date(t.sample_collected_time) - new Date(t.patient.createdAt)) / 60000
+        );
+        if (mins <= 15) {
+          collectedWithin15Min++;
+        } else {
+          delayedCount++;
+        }
+      } else if (!t.sample_collected_time) {
+        // If not collected yet and already past 15 min from order
+        const mins = Math.round((new Date() - new Date(t.patient.createdAt)) / 60000);
+        if (mins > 15) {
+          delayedCount++;
+        }
+      }
+    });
+
+    const collectedWithin15MinPercent =
+      totalStat === 0 ? 0 : Number(((collectedWithin15Min / totalStat) * 100).toFixed(2));
+
+    res.json({
+      success: true,
+      data: {
+        totalStat,
+        collectedWithin15MinPercent,
+        delayedCount,
+        targetMinutes: 15,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// API 4: Delayed STAT Cases List
+const getDelayedStatCases = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const statTests = await PatientTest.findAll({
+      where: testWhere,
+      include: [
+        {
+          model: Investigation,
+          as: "investigation",
+          where: { ...investigationWhere, stattest: true },
+          attributes: ["testname"],
+          required: true,
+        },
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          attributes: ["id", "p_name", "createdAt"],
+          include: [
+            {
+              model: PPPMode,
+              as: "patientPPModes",
+              where: pppWhere,
+              required: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    const delayedCases = [];
+
+    statTests.forEach((t) => {
+      let mins = 0;
+      if (t.sample_collected_time && t.patient?.createdAt) {
+        mins = Math.round(
+          (new Date(t.sample_collected_time) - new Date(t.patient.createdAt)) / 60000
+        );
+      } else if (!t.sample_collected_time && t.patient?.createdAt) {
+        mins = Math.round((new Date() - new Date(t.patient.createdAt)) / 60000);
+      }
+
+      if (mins > 15) {
+        delayedCases.push({
+          patientId: t.patient?.id,
+          patientName: t.patient?.p_name,
+          testName: t.investigation?.testname,
+          delayMinutes: mins,
+          phlebotomistName: t.collected_by || "Pending",
+          delayReason: t.rejection_reason || "Not specified",
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      data: delayedCases,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* Dispatch & Transport Monitor */
+
+// API 5: Dispatch Summary
+const getDispatchSummary = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const thresholdMinutes = 30; // Default threshold
+
+    const commonInclude = [
+      {
+        model: Investigation,
+        as: "investigation",
+        where: investigationWhere,
+        required: true,
+      },
+      {
+        model: Patient,
+        as: "patient",
+        where: patientWhere,
+        required: true,
+        include: [
+          {
+            model: PPPMode,
+            as: "patientPPModes",
+            where: pppWhere,
+            required: true,
+          },
+        ],
+      },
+    ];
+
+    const notDispatchedOverThreshold = await PatientTest.count({
+      where: {
+        ...testWhere,
+        sample_collected_time: { [Op.ne]: null },
+        dispatch_time: null,
+        [Op.and]: sequelize.literal(
+          `EXTRACT(EPOCH FROM (NOW() - "patient_test"."sample_collected_time"))/60 > ${thresholdMinutes}`
+        ),
+      },
+      include: commonInclude,
+    });
+
+    const inTransit = await PatientTest.count({
+      where: {
+        ...testWhere,
+        status: "intransit",
+      },
+      include: commonInclude,
+    });
+
+    const delayedInTransit = await PatientTest.count({
+      where: {
+        ...testWhere,
+        status: "intransit",
+        dispatch_time: { [Op.ne]: null },
+        [Op.and]: sequelize.literal(
+          `EXTRACT(EPOCH FROM (NOW() - "patient_test"."dispatch_time"))/60 > 60` // Assume 60 min transit threshold
+        ),
+      },
+      include: commonInclude,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        notDispatchedOverThreshold,
+        inTransit,
+        delayedInTransit,
+        coldChainComplianceStatus: "Maintained", // Placeholder
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// API 6: Dispatch Threshold Info
+const getDispatchThresholdInfo = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const thresholdMinutes = 30;
+
+    const delayedCount = await PatientTest.count({
+      where: {
+        ...testWhere,
+        sample_collected_time: { [Op.ne]: null },
+        dispatch_time: null,
+        [Op.and]: sequelize.literal(
+          `EXTRACT(EPOCH FROM (NOW() - "patient_test"."sample_collected_time"))/60 > ${thresholdMinutes}`
+        ),
+      },
+      include: [
+        {
+          model: Investigation,
+          as: "investigation",
+          where: investigationWhere,
+          required: true,
+        },
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          include: [
+            {
+              model: PPPMode,
+              as: "patientPPModes",
+              where: pppWhere,
+              required: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    let status = "GREEN";
+    if (delayedCount > 10) status = "RED";
+    else if (delayedCount > 5) status = "AMBER";
+
+    res.json({
+      success: true,
+      data: {
+        dispatchThresholdMinutes: thresholdMinutes,
+        status,
+        delayedCount,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* Trend Analysis */
+
+// API 7: Hourly Collection Load
+const getHourlyCollectionLoad = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const loads = await PatientTest.findAll({
+      where: {
+        ...testWhere,
+        sample_collected_time: { [Op.ne]: null },
+      },
+      raw: true,
+      attributes: [
+        [sequelize.fn("EXTRACT", sequelize.literal('HOUR FROM "patient_test"."sample_collected_time"')), "hour"],
+        [sequelize.fn("COUNT", sequelize.col("patient_test.id")), "count"],
+      ],
+      include: [
+        {
+          model: Investigation,
+          as: "investigation",
+          where: investigationWhere,
+          required: true,
+          attributes: [],
+        },
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          attributes: [],
+          include: [
+            {
+              model: PPPMode,
+              as: "patientPPModes",
+              where: pppWhere,
+              required: true,
+              attributes: [],
+            },
+          ],
+        },
+      ],
+      group: [sequelize.literal("hour")],
+      order: [[sequelize.literal("hour"), "ASC"]],
+    });
+
+    res.json({
+      success: true,
+      data: loads.map((l) => ({
+        hour: Number(l.hour),
+        count: Number(l.count),
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// API 8: Recollection Rate Trend
+const getRecollectionRateTrend = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const trends = await PatientTest.findAll({
+      where: testWhere,
+      raw: true,
+      attributes: [
+        [sequelize.fn("DATE", sequelize.col("patient_test.createdAt")), "date"],
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal("CASE WHEN \"patient_test\".\"status\" = 'recollect' THEN 1 ELSE 0 END")
+          ),
+          "recollectCount",
+        ],
+        [sequelize.fn("COUNT", sequelize.col("patient_test.id")), "totalCount"],
+      ],
+      include: [
+        {
+          model: Investigation,
+          as: "investigation",
+          where: investigationWhere,
+          required: true,
+          attributes: [],
+        },
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          required: true,
+          attributes: [],
+          include: [
+            {
+              model: PPPMode,
+              as: "patientPPModes",
+              where: pppWhere,
+              required: true,
+              attributes: [],
+            },
+          ],
+        },
+      ],
+      group: [sequelize.literal("date")],
+      order: [[sequelize.literal("date"), "ASC"]],
+    });
+
+    res.json({
+      success: true,
+      data: trends.map((t) => ({
+        date: t.date,
+        recollectionPercent:
+          Number(t.totalCount) === 0
+            ? 0
+            : Number(
+                ((Number(t.recollectCount) / Number(t.totalCount)) * 100).toFixed(2)
+              ),
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// API 9: Delay Trend
+const getDelayTrend = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const {
+      testWhere,
+      patientWhere,
+      investigationWhere,
+      pppWhere,
+    } = buildCommonFilters(req.query, hospitalId);
+
+    const trends = await PatientTest.findAll({
+      where: {
+        ...testWhere,
+        sample_collected_time: { [Op.ne]: null },
+      },
+      raw: true,
+      include: [
+        {
+          model: Patient,
+          as: "patient",
+          where: patientWhere,
+          attributes: [],
+          required: true,
+          include: [
+            {
+              model: PPPMode,
+              as: "patientPPModes",
+              where: pppWhere,
+              required: true,
+              attributes: [],
+            },
+          ],
+        },
+        {
+          model: Investigation,
+          as: "investigation",
+          where: investigationWhere,
+          required: true,
+          attributes: [],
+        },
+      ],
+      attributes: [
+        [sequelize.fn("DATE", sequelize.col("patient_test.createdAt")), "date"],
+        [
+          sequelize.fn(
+            "AVG",
+            sequelize.literal(
+              'EXTRACT(EPOCH FROM ("patient_test"."sample_collected_time" - "patient_test"."createdAt"))/60'
+            )
+          ),
+          "avgDelay",
+        ],
+      ],
+      group: [sequelize.literal("date")],
+      order: [[sequelize.literal("date"), "ASC"]],
+    });
+
+    res.json({
+      success: true,
+      data: trends.map((t) => ({
+        date: t.date,
+        avgCollectionDelayMinutes: Number(Number(t.avgDelay).toFixed(2)),
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* Filter & Configuration Support */
+
+// API 10: Filter Data API
+const getFilterData = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospitalid;
+    const { startDate, endDate } = req.query;
+
+    const testDateFilter = buildDateRange(startDate, endDate, "createdAt");
+
+    // Get departments that have tests in the date range
+    const departments = await Department.findAll({
+      attributes: ["id", "dptname"],
+      include: [
+        {
+          model: Investigation,
+          as: "investigations",
+          attributes: [],
+          required: true,
+          include: [
+            {
+              model: PatientTest,
+              as: "investigationTests",
+              where: { hospitalid: hospitalId, ...testDateFilter },
+              attributes: [],
+              required: true,
+            },
+          ],
+        },
+      ],
+      group: ["department.id", "department.dptname"],
+    });
+
+    const phlebotomists = await PatientTest.findAll({
+      where: { 
+        hospitalid: hospitalId, 
+        collected_by: { [Op.ne]: null },
+        ...testDateFilter,
+      },
+      attributes: [[sequelize.fn("DISTINCT", sequelize.col("collected_by")), "name"]],
+    });
+
+    // Get collection centers (Nodals) that have tests in the date range
+    const collectionCenters = await Nodal.findAll({
+      attributes: ["id", "nodalname"],
+      include: [
+        {
+          model: PatientTest,
+          as: "nodalTests",
+          where: { hospitalid: hospitalId, ...testDateFilter },
+          attributes: [],
+          required: true,
+        },
+      ],
+      group: ["nodal.id", "nodal.nodalname"],
+    });
+
+    res.json({
+      success: true,
+      data: {
+        departments: departments.map((d) => ({ id: d.id, name: d.dptname })),
+        phlebotomists: phlebotomists.map((p) => p.get("name")),
+        collectionCenters: collectionCenters.map((c) => ({ id: c.id, name: c.nodalname })),
+        locationTypes: ["OPD", "IPD", "Home"],
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// API 11: KPI Threshold Config
+const getKPIThresholdConfig = async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: {
+        statCollectionTimeTarget: 15,
+        dispatchDelayThreshold: 30,
+        reprintPercentTarget: 5,
+        tatThresholds: {
+          green: 30,
+          amber: 45,
+          red: 60,
+        },
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   kpis,
   getOrderToCollectionTAT,
@@ -680,4 +1511,15 @@ module.exports = {
   getMyPerformance,
   recollectionSummary,
   tubeWiseErrors,
+  getBarcodeSummary,
+  getTopReprintReasons,
+  getStatSummary,
+  getDelayedStatCases,
+  getDispatchSummary,
+  getDispatchThresholdInfo,
+  getHourlyCollectionLoad,
+  getRecollectionRateTrend,
+  getDelayTrend,
+  getFilterData,
+  getKPIThresholdConfig,
 };

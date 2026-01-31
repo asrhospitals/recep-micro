@@ -7,6 +7,7 @@ const {
   PPPMode,
   Department,
   Result,
+  BarcodeTraceability,
 } = require("../repository/associationModels/associations");
 const SpecimenTypeMaster = require("../repository/relationalModels/specimenTypeMaster");
 
@@ -413,6 +414,7 @@ const collectSample = async (req, res) => {
 
       patientTest.status = "collected";
       patientTest.sample_collected_time = currentTime;
+      patientTest.collected_by=req.user.username;
       // Clear collect_later fields if previously set
       patientTest.collect_later_reason = null;
       patientTest.collect_later_marked_at = null;
@@ -461,6 +463,146 @@ const collectSample = async (req, res) => {
     });
   }
 };
+
+/**
+ * @description Checks if a barcode has been printed before.
+ */
+const checkBarcodePrintStatus = async (req, res) => {
+  try {
+    const { hospitalid: hospitalId } = req.user;
+    const { barcode } = req.params;
+
+    if (!barcode) {
+      return res.status(400).json({ success: false, message: "Barcode is required" });
+    }
+
+    const log = await BarcodeTraceability.findOne({
+      where: { barcode, hospitalid: hospitalId },
+    });
+
+    if (!log || log.total_prints === 1) {
+      return res.json({
+        success: true,
+        data: {
+          status: "FIRST_PRINT",
+          totalPrinted: 0,
+          reprints: 0,
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        status: "REPRINT",
+        totalPrinted: log.total_prints,
+        reprints: log.reprint_count,
+      },
+    });
+  } catch (error) {
+    console.error("Check Barcode Print Status Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Server error: ${error.message}`,
+    });
+  }
+};
+
+/**
+ * @description Log barcode print/reprint for MIS tracking.
+ * This should be called whenever a barcode is printed.
+ */
+const logBarcodePrint = async (req, res) => {
+  const t = await BarcodeTraceability.sequelize.transaction();
+  try {
+    const { hospitalid: hospitalId, userid, id } = req.user;
+    const currentUserId = userid || id;
+    const { pbarcode, pid, isReprint, reason } = req.body;
+
+    if (!pbarcode || !pid) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Barcode and PID are required" });
+    }
+
+    // Validate that the patient exists and belongs to this hospital
+    const patient = await Patient.findByPk(pid);
+    if (!patient || Number(patient.hospitalid) !== Number(hospitalId)) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid patient or patient does not belong to this hospital",
+      });
+    }
+
+    const reprint = isReprint === true || isReprint === "true";
+
+    if (reprint && !reason) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Reprint reason is required" });
+    }
+
+    let log = await BarcodeTraceability.findOne({
+      where: { barcode: pbarcode, hospitalid: hospitalId }, // 🔥 hospital level uniqueness
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!log) {
+      log = await BarcodeTraceability.create({
+        barcode: pbarcode,
+        pid,
+        hospitalid: hospitalId,
+        total_prints: 1,
+        reprint_count: 0, // First record: reprint_count is always 0
+        reprint_reasons: reprint
+          ? [{ reason, printed_at: new Date(), printed_by: currentUserId }]
+          : [],
+        created_by: currentUserId,
+        updated_by: currentUserId,
+      }, { transaction: t });
+    } else {
+      // Throttling: Check if this is a duplicate call within a 5-second window
+      const now = new Date();
+      const lastUpdate = new Date(log.updatedAt);
+      const diffSeconds = (now - lastUpdate) / 1000;
+
+      if (diffSeconds < 5) {
+        await t.commit();
+        return res.json({ 
+          success: true, 
+          message: "Print event already logged recently", 
+          data: log,
+          throttled: true 
+        });
+      }
+
+      log.total_prints += 1;
+      log.updated_by = currentUserId;
+
+      // Increment reprint_count only from the second print onwards
+      if (reprint || log.total_prints > 1) {
+        log.reprint_count += 1;
+
+        const reasons = Array.isArray(log.reprint_reasons) ? [...log.reprint_reasons] : [];
+        reasons.push({ reason: reason || "Reprint", printed_at: new Date(), printed_by: currentUserId });
+        log.reprint_reasons = reasons;
+      }
+
+      await log.save({ transaction: t });
+    }
+
+    await t.commit();
+    await log.reload();
+
+    return res.json({ success: true, message: "Print event logged successfully", data: log });
+
+  } catch (error) {
+    await t.rollback();
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
 
 /**
  * @description Retrieves patients who have at least one test marked collect_later.
@@ -634,4 +776,6 @@ module.exports = {
   getPendingCollection,
   showCollectedSample,
   sendToNodal,
+  logBarcodePrint,
+  checkBarcodePrintStatus,
 };
