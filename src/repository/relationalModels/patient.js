@@ -68,7 +68,8 @@ const Patient = sequelize.define(
       type:DataTypes.STRING
     },
     p_idnum:{
-      type:DataTypes.STRING
+      type:DataTypes.STRING,
+      unique:true
     },
     p_whtsap: {
       type: DataTypes.STRING,
@@ -145,10 +146,6 @@ const Patient = sequelize.define(
     p_status:{
       type:DataTypes.STRING,
       defaultValue:"default"
-    },
-    reverification_status: {
-      type: DataTypes.STRING,
-      allowNull: true
     }
   },
 );
