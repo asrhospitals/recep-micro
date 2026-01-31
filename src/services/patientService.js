@@ -89,7 +89,7 @@ async function getPatientTestData({ hospitalId }, queryParams) {
     limit,
     offset,
     order: [["id", "DESC"]],
-    subQuery: false,
+    // subQuery: false,
     distinct: true,
     col: "id",
   });
