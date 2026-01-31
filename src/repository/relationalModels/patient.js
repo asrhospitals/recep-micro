@@ -146,6 +146,10 @@ const Patient = sequelize.define(
     p_status:{
       type:DataTypes.STRING,
       defaultValue:"default"
+    },
+    reverification_status: {
+      type: DataTypes.STRING,
+      allowNull: true
     }
   },
 );
