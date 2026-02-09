@@ -1,9 +1,10 @@
 const sequelize = require("../../config/dbConnection");
-const { DataTypes, DATE } = require("sequelize");
+const { DataTypes } = require("sequelize");
 const Patient = require("../relationalModels/patient");
 const Investigation = require("../relationalModels/investigation");
 const Hospital = require("../relationalModels/hospital");
 const Nodal = require("../relationalModels/nodalMaster");
+const Specimen = require("../relationalModels/specimenTypeMaster");
 
 const PatientTest = sequelize.define("patient_test", {
   id: {
@@ -41,6 +42,20 @@ const PatientTest = sequelize.define("patient_test", {
       model: Investigation,
       key: "id",
     },
+  },
+
+  specimenid: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: Specimen,
+      key: "id",
+    },
+  },
+
+  order_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
   },
 
   rejection_reason: {

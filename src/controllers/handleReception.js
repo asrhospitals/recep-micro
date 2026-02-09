@@ -10,6 +10,8 @@ const {
   BarcodeTraceability,
 } = require("../repository/associationModels/associations");
 const SpecimenTypeMaster = require("../repository/relationalModels/specimenTypeMaster");
+const SpecimenTransaction = require("../repository/relationalModels/specimenTransaction");
+const { generateSpecimens } = require("../services/barcode.service");
 
 const patientService = require("../services/patientService");
 const { Op } = require("sequelize");
@@ -45,7 +47,7 @@ const getTestData = async (req, res) => {
     // 3. Service Call (token-scoped)
     const result = await patientService.getPatientTestData(
       { hospitalId, nodalId },
-      req.query
+      req.query,
     );
 
     // 4. Standardized Success Response
@@ -84,7 +86,7 @@ const verifyPatient = async (req, res) => {
     const normalizedRole = roleType?.toLowerCase();
 
     // 1. Role Authorization (Reception & Phlebotomist only)
-    const allowedRoles = ["reception", "phlebotomist"];
+    const allowedRoles = ["phlebotomist"];
     if (!allowedRoles.includes(normalizedRole)) {
       return res
         .status(403)
@@ -104,13 +106,14 @@ const verifyPatient = async (req, res) => {
     // 3. Find the Patient or check for the Patient
 
     const checkForPatient = await Patient.findOne({
-      where: { id: pid, p_status: "default" },
+      where: { id: pid, p_status: "default", hospitalid: hospitalId },
     });
 
     if (!checkForPatient) {
-      return res
-        .status(200)
-        .json({ success: false, message: "Patient not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Patient not found or already verified",
+      });
     }
 
     // Hard coded for verify the patient
@@ -205,7 +208,7 @@ const getVerifiedTestData = async (req, res) => {
     // 3. Service Call (token-scoped)
     const result = await patientService.getVerifiedPatientTestData(
       { hospitalId, nodalId },
-      req.query
+      req.query,
     );
 
     // 4. Standardized Success Response
@@ -236,10 +239,7 @@ const getTestDataById = async (req, res) => {
   try {
     /* 1. Authorization */
     const { roleType } = req.user;
-    if (
-      roleType?.toLowerCase() !== "reception" &&
-      roleType?.toLowerCase() !== "phlebotomist"
-    ) {
+    if (roleType?.toLowerCase() !== "phlebotomist") {
       return res.status(403).json({
         message: "Access denied.",
       });
@@ -268,7 +268,7 @@ const getTestDataById = async (req, res) => {
         {
           model: PPPMode,
           as: "patientPPModes",
-          attributes: ["remark", "attatchfile", "pbarcode", "pop", "popno"],
+          attributes: ["remark", "attatchfile", "pop", "popno"],
         },
         {
           model: PatientTest,
@@ -278,6 +278,7 @@ const getTestDataById = async (req, res) => {
           attributes: [
             "id",
             "status",
+            "order_id",
             "collect_later_reason",
             "createdAt",
             "updatedAt",
@@ -346,6 +347,32 @@ const getTestDataById = async (req, res) => {
   }
 };
 
+// Generate Barcode
+
+const generateBarcode = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { roleType, hospitalid } = req.user;
+
+    if (roleType?.toLowerCase() !== "phlebotomist") {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    const result = await generateSpecimens(orderId, hospitalid);
+
+    return res.status(200).json({
+      success: true,
+      message: "Barcodes generated successfully",
+      data: result,
+    });
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
 /**
  * @description Mark test as 'collected' or 'collect_later' for PPP or Bill mode.
  * Restricted to Reception and Phlebotomist roles for their own hospital.
@@ -403,6 +430,42 @@ const collectSample = async (req, res) => {
     const currentTime = new Date();
 
     if (action === "collect") {
+      // Barcode Generation Checks
+
+      // 1️⃣ Patient must be verified
+      const patient = await Patient.findOne({
+        where: { id: pid, p_status: "verified" },
+      });
+
+      if (!patient) {
+        return res.status(400).json({
+          success: false,
+          message: "Patient is not verified for sample collection",
+        });
+      }
+
+      // 2️⃣ Order must exist
+      if (!patientTest.order_id) {
+        return res.status(400).json({
+          success: false,
+          message: "Order not linked to test. Barcode cannot be validated.",
+        });
+      }
+
+      // 3️⃣ Barcode must exist
+      const barcodeExists = await SpecimenTransaction.findOne({
+        where: {
+          order_id: patientTest.order_id,
+        },
+      });
+
+      if (!barcodeExists) {
+        return res.status(400).json({
+          success: false,
+          message: "Barcode not generated. Please generate barcode first.",
+        });
+      }
+
       // Transition: verified -> collected OR pending -> collected
       const validStatusesForCollect = ["center", "pending"];
       if (!validStatusesForCollect.includes(patientTest.status)) {
@@ -414,7 +477,7 @@ const collectSample = async (req, res) => {
 
       patientTest.status = "collected";
       patientTest.sample_collected_time = currentTime;
-      patientTest.collected_by=req.user.username;
+      patientTest.collected_by = req.user.username;
       // Clear collect_later fields if previously set
       patientTest.collect_later_reason = null;
       patientTest.collect_later_marked_at = null;
@@ -473,7 +536,9 @@ const checkBarcodePrintStatus = async (req, res) => {
     const { barcode } = req.params;
 
     if (!barcode) {
-      return res.status(400).json({ success: false, message: "Barcode is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Barcode is required" });
     }
 
     const log = await BarcodeTraceability.findOne({
@@ -521,7 +586,9 @@ const logBarcodePrint = async (req, res) => {
 
     if (!pbarcode || !pid) {
       await t.rollback();
-      return res.status(400).json({ success: false, message: "Barcode and PID are required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Barcode and PID are required" });
     }
 
     // Validate that the patient exists and belongs to this hospital
@@ -538,7 +605,9 @@ const logBarcodePrint = async (req, res) => {
 
     if (reprint && !reason) {
       await t.rollback();
-      return res.status(400).json({ success: false, message: "Reprint reason is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Reprint reason is required" });
     }
 
     let log = await BarcodeTraceability.findOne({
@@ -548,18 +617,21 @@ const logBarcodePrint = async (req, res) => {
     });
 
     if (!log) {
-      log = await BarcodeTraceability.create({
-        barcode: pbarcode,
-        pid,
-        hospitalid: hospitalId,
-        total_prints: 1,
-        reprint_count: 0, // First record: reprint_count is always 0
-        reprint_reasons: reprint
-          ? [{ reason, printed_at: new Date(), printed_by: currentUserId }]
-          : [],
-        created_by: currentUserId,
-        updated_by: currentUserId,
-      }, { transaction: t });
+      log = await BarcodeTraceability.create(
+        {
+          barcode: pbarcode,
+          pid,
+          hospitalid: hospitalId,
+          total_prints: 1,
+          reprint_count: 0, // First record: reprint_count is always 0
+          reprint_reasons: reprint
+            ? [{ reason, printed_at: new Date(), printed_by: currentUserId }]
+            : [],
+          created_by: currentUserId,
+          updated_by: currentUserId,
+        },
+        { transaction: t },
+      );
     } else {
       // Throttling: Check if this is a duplicate call within a 5-second window
       const now = new Date();
@@ -568,11 +640,11 @@ const logBarcodePrint = async (req, res) => {
 
       if (diffSeconds < 5) {
         await t.commit();
-        return res.json({ 
-          success: true, 
-          message: "Print event already logged recently", 
+        return res.json({
+          success: true,
+          message: "Print event already logged recently",
           data: log,
-          throttled: true 
+          throttled: true,
         });
       }
 
@@ -583,8 +655,14 @@ const logBarcodePrint = async (req, res) => {
       if (reprint || log.total_prints > 1) {
         log.reprint_count += 1;
 
-        const reasons = Array.isArray(log.reprint_reasons) ? [...log.reprint_reasons] : [];
-        reasons.push({ reason: reason || "Reprint", printed_at: new Date(), printed_by: currentUserId });
+        const reasons = Array.isArray(log.reprint_reasons)
+          ? [...log.reprint_reasons]
+          : [];
+        reasons.push({
+          reason: reason || "Reprint",
+          printed_at: new Date(),
+          printed_by: currentUserId,
+        });
         log.reprint_reasons = reasons;
       }
 
@@ -594,15 +672,16 @@ const logBarcodePrint = async (req, res) => {
     await t.commit();
     await log.reload();
 
-    return res.json({ success: true, message: "Print event logged successfully", data: log });
-
+    return res.json({
+      success: true,
+      message: "Print event logged successfully",
+      data: log,
+    });
   } catch (error) {
     await t.rollback();
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
-
 
 /**
  * @description Retrieves patients who have at least one test marked collect_later.
@@ -631,7 +710,7 @@ const getPendingCollection = async (req, res) => {
 
     const result = await patientService.getPendingCollection(
       { hospitalId, nodalId },
-      req.query
+      req.query,
     );
 
     return res.status(200).json({
@@ -684,7 +763,7 @@ const showCollectedSample = async (req, res) => {
     // 3. Service Call (token-scoped)
     const result = await patientService.getCollectedData(
       { hospitalId, nodalId },
-      req.query
+      req.query,
     );
 
     // 4. Standardized Success Response
@@ -744,7 +823,7 @@ const sendToNodal = async (req, res) => {
           hospitalid: userHospitalId,
           status: "collected",
         },
-      }
+      },
     );
 
     if (updatedCount === 0) {
@@ -778,4 +857,5 @@ module.exports = {
   sendToNodal,
   logBarcodePrint,
   checkBarcodePrintStatus,
+  generateBarcode
 };

@@ -239,8 +239,6 @@ async function getCollectedData({ hospitalId }, queryParams) {
   return _formatPaginationResponse(paginatedRows, totalItems, limit, page);
 }
 
-
-
 /**
  * DATA RETRIEVAL: Get Patients with tests marked for Later Collection
  */
@@ -363,8 +361,7 @@ function _derivePStatus(patient) {
       pStatus = "delivered";
     } else if (
       statuses.some(
-        (s) =>
-          s === "collected" || s === "intransit" || s === "inprogress"
+        (s) => s === "collected" || s === "intransit" || s === "inprogress",
       )
     ) {
       pStatus = "collected";
@@ -396,7 +393,7 @@ function _getPPPIncludes() {
       model: PatientTest,
       as: "patientTests",
       where: { status: "center" },
-      attributes: ["id", "createdAt", "status"],
+      attributes: ["id", "createdAt", "status", "order_id"],
       required: true,
       include: [
         {
@@ -432,7 +429,13 @@ function _getCollectedSample() {
         },
       },
 
-      attributes: ["id", "status", "createdAt", "updatedAt", "sample_collected_time"],
+      attributes: [
+        "id",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "sample_collected_time",
+      ],
       required: true,
       include: [
         {

@@ -10,7 +10,8 @@ const {
   sendToNodal,
   reverifyPatient,
   logBarcodePrint,
-  checkBarcodePrintStatus
+  checkBarcodePrintStatus,
+  generateBarcode,
 } = require("../controllers/handleReception");
 const {
   kpis,
@@ -59,7 +60,11 @@ router.route("/send-sample-nodal").put(sendToNodal);
 // 9. Log Barcode Print
 router.route("/log-barcode-print").post(logBarcodePrint);
 // 10. Check Barcode Print Status
-router.route("/barcodes/:barcode/check-print-status").get(checkBarcodePrintStatus);
+router
+  .route("/barcodes/:barcode/check-print-status")
+  .get(checkBarcodePrintStatus);
+// 11. Generate Barcode
+router.route("/generate-barcode/:orderId").post(generateBarcode);
 
 // 8. MIS KPIs
 router.route("/mis/kpis").get(kpis);
