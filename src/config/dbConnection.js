@@ -33,4 +33,16 @@ const sequelize = new Sequelize(
   }
 );
 
+// const sequelize = new Sequelize(
+//   "devdb", // database name
+//   "devuser", // username
+//   "devpass", // password
+//   {
+//     host: "localhost",
+//     dialect: "postgres",
+//     port: 5433,
+//   },
+// );
+
+
 module.exports = sequelize;

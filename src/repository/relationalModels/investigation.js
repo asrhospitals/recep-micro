@@ -86,6 +86,13 @@ const Investigation = sequelize.define(
     testmethod: {
       type: DataTypes.STRING,
     },
+    // New Fileds Added
+    collectiontimepoint:{
+      type:DataTypes.STRING
+    },
+    allowsharedtube:{
+      type:DataTypes.BOOLEAN
+    },
 
     description: {
       type: DataTypes.STRING,
