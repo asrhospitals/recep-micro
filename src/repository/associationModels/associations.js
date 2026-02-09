@@ -14,12 +14,18 @@ const ProfileMaster = require("../relationalModels/profileMaster");
 const DerivedTestComponent = require("../relationalModels/derivedTestModel");
 const Specimen = require("../relationalModels/specimenTypeMaster");
 const BarcodeTraceability = require("../relationalModels/barcodeTraceability");
+const SpecimenTransaction = require("../relationalModels/specimenTransaction");
+const SpecimenTest = require("../relationalModels/specimenTestModel");
 
 // Associations
 
 // Patient ↔ PatientTest
 Patient.hasMany(PatientTest, { foreignKey: "pid", as: "patientTests" });
-PatientTest.belongsTo(Patient, { foreignKey: "pid", as: "patient", targetKey: "id" });
+PatientTest.belongsTo(Patient, {
+  foreignKey: "pid",
+  as: "patient",
+  targetKey: "id",
+});
 
 // Patient ↔ OPBill
 Patient.hasMany(OPBill, { foreignKey: "pid", as: "patientBills" });
@@ -29,17 +35,19 @@ OPBill.belongsTo(Patient, { foreignKey: "pid", as: "patient" });
 Patient.hasMany(PPPMode, { foreignKey: "pid", as: "patientPPModes" });
 PPPMode.belongsTo(Patient, { foreignKey: "pid", as: "patient" });
 
-
-
 // Patient ↔ ABHA
 Patient.hasMany(ABHA, { foreignKey: "pid", as: "patientAbhas" });
 ABHA.belongsTo(Patient, { foreignKey: "pid", as: "patient" });
 
-
 // Investigation ↔ PatientTest
-Investigation.hasMany(PatientTest, { foreignKey: "investigation_id", as: "investigationTests" });
-PatientTest.belongsTo(Investigation, { foreignKey: "investigation_id", as: "investigation" });
-
+Investigation.hasMany(PatientTest, {
+  foreignKey: "investigation_id",
+  as: "investigationTests",
+});
+PatientTest.belongsTo(Investigation, {
+  foreignKey: "investigation_id",
+  as: "investigation",
+});
 
 // Patient ↔ Hospital
 Patient.belongsTo(Hospital, { foreignKey: "hospitalid", as: "hospital" });
@@ -57,46 +65,11 @@ PatientTest.belongsTo(Nodal, { foreignKey: "nodalid", as: "nodal" });
 Investigation.belongsTo(Specimen, { foreignKey: "sampletypeId" });
 Specimen.hasMany(Investigation, { foreignKey: "sampletypeId" });
 
-
-// // A single bill (OPBill) can have multiple payment details (OPPaymentDetail)
-// OPBill.hasMany(OPPaymentDetail, { foreignKey: 'op_bill_id', as: 'Payments' });
-// // A payment detail (OPPaymentDetail) belongs to one bill (OPBill)
-// OPPaymentDetail.belongsTo(OPBill, { foreignKey: 'op_bill_id', as: 'Bill' });
-
-// InvDetail.belongsTo(OPBill, {
-//     foreignKey: 'op_bill_id', // Links to the 'id' in the patient_op_bills table
-//     as: 'opBillHeader'        // Alias for easy retrieval
-// });
-
-// // We must also define the reverse association in the OPBill model:
-// OPBill.hasMany(InvDetail, {
-//     foreignKey: 'op_bill_id',
-//     as: 'investigationDetails' // Used to fetch all items for a bill
-// });
-
-
-// 2. Association with the Investigation Master Data (investigations)
-
-// InvDetail BELONGS TO Investigation (Many-to-One)
-// Each line item references one specific master test/service.
-// InvDetail.belongsTo(Investigation, {
-//     foreignKey: 'inv_id', // Links to the 'id' in the investigations table
-//     as: 'investigation'   // Alias for easy retrieval of the test name, etc.
-// });
-
-// // We must also define the reverse association in the Investigation model:
-// Investigation.hasMany(InvDetail, {
-//     foreignKey: 'inv_id',
-//     as: 'billLineItems' // Used to see where this master test was billed
-// });
-
-
-
 // Patient ↔ Investigation (many-to-many via PatientTest)
 Patient.belongsToMany(Investigation, {
   through: PatientTest,
   foreignKey: "pid",
-  otherKey: "investigation_id",   // ✅ corrected
+  otherKey: "investigation_id", // ✅ corrected
 });
 Investigation.belongsToMany(Patient, {
   through: PatientTest,
@@ -125,18 +98,25 @@ Investigation.hasMany(ProfileInv, {
 });
 
 // Investigation ↔ Department
-Investigation.belongsTo(Department, { foreignKey: "departmentId", as: "department" }); // ✅ added alias
-Department.hasMany(Investigation, { foreignKey: "departmentId", as: "investigations" });
+Investigation.belongsTo(Department, {
+  foreignKey: "departmentId",
+  as: "department",
+}); // ✅ added alias
+Department.hasMany(Investigation, {
+  foreignKey: "departmentId",
+  as: "investigations",
+});
 
 // Investigation ↔ Result
 Investigation.hasMany(Result, { foreignKey: "investigationid", as: "results" });
-Result.belongsTo(Investigation, { foreignKey: "investigationid", as: "investigation" });
+Result.belongsTo(Investigation, {
+  foreignKey: "investigationid",
+  as: "investigation",
+});
 
 // Result ↔ NormalValue
 Result.hasMany(NormalValue, { foreignKey: "resultId", as: "normalValues" });
 NormalValue.belongsTo(Result, { foreignKey: "resultId", as: "result" });
-
-
 
 Investigation.hasMany(DerivedTestComponent, {
   foreignKey: "parenttestid",
@@ -158,12 +138,38 @@ DerivedTestComponent.belongsTo(Investigation, {
   as: "childTest",
 });
 
+// Specimen ↔ PatientTest mapping
+SpecimenTransaction.hasMany(SpecimenTest, {
+  foreignKey: "specimen_id",
+});
+
+SpecimenTest.belongsTo(SpecimenTransaction, {
+  foreignKey: "specimen_id",
+});
+
+PatientTest.hasMany(SpecimenTest, {
+  foreignKey: "patient_test_id",
+});
+
+SpecimenTest.belongsTo(PatientTest, {
+  foreignKey: "patient_test_id",
+});
+
 // BarcodeTraceability Associations
 BarcodeTraceability.belongsTo(Patient, { foreignKey: "pid", as: "patient" });
-Patient.hasMany(BarcodeTraceability, { foreignKey: "pid", as: "barcodeHistory" });
+Patient.hasMany(BarcodeTraceability, {
+  foreignKey: "pid",
+  as: "barcodeHistory",
+});
 
-BarcodeTraceability.belongsTo(Hospital, { foreignKey: "hospitalid", as: "hospital" });
-Hospital.hasMany(BarcodeTraceability, { foreignKey: "hospitalid", as: "barcodeTraceabilities" });
+BarcodeTraceability.belongsTo(Hospital, {
+  foreignKey: "hospitalid",
+  as: "hospital",
+});
+Hospital.hasMany(BarcodeTraceability, {
+  foreignKey: "hospitalid",
+  as: "barcodeTraceabilities",
+});
 
 module.exports = {
   Patient,
@@ -181,9 +187,6 @@ module.exports = {
   ProfileMaster,
   DerivedTestComponent,
   BarcodeTraceability,
+  SpecimenTest,
+  SpecimenTransaction,
 };
-
-
-
-
-
