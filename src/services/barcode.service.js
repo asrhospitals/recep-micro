@@ -7,6 +7,7 @@ const {
 const Order = require("../repository/relationalModels/order");
 const Investigation = require("../repository/relationalModels/investigation");
 const SpecimenTransaction = require("../repository/relationalModels/specimenTransaction");
+const SpecimenTest = require("../repository/relationalModels/specimenTestModel");
 const TubeMaster = require("../repository/relationalModels/tubeMaster");
 
 // -------------------- HELPERS --------------------
@@ -105,14 +106,15 @@ const generateSpecimens = async (orderId, hospitalId) => {
 
         const base = `${patient.uhid}-${ddmmyy(
           group.tests[0].createdAt,
-        )}--${order.daily_order_number}--${String(tubeSeq).padStart(
+        )}-${order.daily_order_number}-${String(tubeSeq).padStart(
           2,
           "0",
-        )}--${String(hospitalId).padStart(2, "0")}`;
+        )}-${String(hospitalId).padStart(2, "0")}`;
 
-        const barcode = `${base}--${checkDigit(base)}`;
+        const barcode = `${base}-${checkDigit(base)}`;
 
-        await SpecimenTransaction.create(
+        const chunkTests = group.tests.slice(i, i + maxPerTube);
+        const specimen = await SpecimenTransaction.create(
           {
             pid: patient.id,
             order_id: orderId,
@@ -124,6 +126,15 @@ const generateSpecimens = async (orderId, hospitalId) => {
             tube_type: group.tube_type,
             collection_timepoint: group.collection_timepoint,
           },
+          { transaction: tx },
+        );
+
+        // MAP TESTS TO THIS TUBE
+        await SpecimenTest.bulkCreate(
+          chunkTests.map((inv) => ({
+            specimen_id: specimen.id,
+            investigation_id: inv.id,
+          })),
           { transaction: tx },
         );
 
