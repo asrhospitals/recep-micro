@@ -233,14 +233,16 @@ const getVerifiedTestData = async (req, res) => {
 
 /**
  * @description Retrieves test-specific patient data (PPP mode and Bill mode) by ID.
- * Restricted strictly to Reception and Phlebotomist roles for their own hospital.
+ * Auto-generates barcodes on first retrieval if not already generated.
+ * Restricted strictly to Phlebotomist role for their own hospital.
  */
 const getTestDataById = async (req, res) => {
   try {
     /* 1. Authorization */
-    const { roleType } = req.user;
+    const { roleType, hospitalid: userHospitalId } = req.user;
     if (roleType?.toLowerCase() !== "phlebotomist") {
       return res.status(403).json({
+        success: false,
         message: "Access denied.",
       });
     }
@@ -285,6 +287,18 @@ const getTestDataById = async (req, res) => {
           ],
           include: [
             {
+              model: SpecimenTransaction,
+              as: "specimenTransactions",
+              attributes: [
+                "id",
+                "barcode_value",
+                "specimen_type",
+                "tube_type",
+                "status",
+              ],
+              required: false,
+            },
+            {
               model: Investigation,
               as: "investigation",
               attributes: [
@@ -292,6 +306,7 @@ const getTestDataById = async (req, res) => {
                 "testmethod",
                 "sampleqty",
                 "containertype",
+                "sampletypeId",
               ],
               include: [
                 {
@@ -302,7 +317,8 @@ const getTestDataById = async (req, res) => {
                 {
                   model: SpecimenTypeMaster,
                   as: "specimen",
-                  attributes: ["specimenname"],
+                  attributes: ["id", "specimenname"],
+                  required: false,
                 },
                 {
                   model: DerivedTestComponent,
@@ -338,11 +354,257 @@ const getTestDataById = async (req, res) => {
       });
     }
 
+    if (patient && patient.patientTests && patient.patientTests.length > 0) {
+      // ==================== GENERATE BARCODES ====================
+      // Get unique order IDs from patient tests
+      const orderIds = [
+        ...new Set(
+          patient.patientTests
+            .map((t) => t.order_id)
+            .filter((oid) => oid != null)
+        ),
+      ];
+
+      if (orderIds.length > 0) {
+        for (const orderId of orderIds) {
+          // Check if barcodes already exist for this order
+          const existingBarcodes = await SpecimenTransaction.findOne({
+            where: { order_id: orderId },
+          });
+
+          // Generate only if no barcodes exist
+          if (!existingBarcodes) {
+            try {
+              await generateSpecimens(orderId, userHospitalId);
+              console.log(`Barcodes generated for order ${orderId}`);
+            } catch (barcodeError) {
+              console.error(
+                `Barcode generation failed for order ${orderId}:`,
+                barcodeError.message
+              );
+              // Re-throw to fail the entire request
+              throw new Error(`Failed to generate barcodes for order ${orderId}: ${barcodeError.message}`);
+            }
+          }
+        }
+      }
+
+      // ==================== FETCH GROUPED DATA ====================
+      // Refresh patient data to include newly generated barcodes
+      const refreshedPatient = await Patient.findOne({
+        where: { id: pid, p_regdate: today, p_status: "verified" },
+        attributes: [
+          "id",
+          "p_name",
+          "p_age",
+          "p_gender",
+          "p_lname",
+          "uhid",
+          "p_status",
+        ],
+        include: [
+          {
+            model: PPPMode,
+            as: "patientPPModes",
+            attributes: ["remark", "attatchfile", "pop", "popno"],
+          },
+          {
+            model: PatientTest,
+            as: "patientTests",
+            where: { status: { [Op.in]: ["center", "pending"] } },
+            required: false,
+            attributes: [
+              "id",
+              "status",
+              "order_id",
+              "collect_later_reason",
+              "createdAt",
+              "updatedAt",
+            ],
+            include: [
+              {
+                model: SpecimenTransaction,
+                as: "specimenTransactions",
+                attributes: [
+                  "id",
+                  "barcode_value",
+                  "specimen_type",
+                  "tube_type",
+                  "status",
+                ],
+                required: false,
+              },
+              {
+                model: Investigation,
+                as: "investigation",
+                attributes: [
+                  "testname",
+                  "testmethod",
+                  "sampleqty",
+                  "containertype",
+                  "sampletypeId",
+                ],
+                include: [
+                  {
+                    model: Department,
+                    as: "department",
+                    attributes: ["dptname"],
+                  },
+                  {
+                    model: SpecimenTypeMaster,
+                    as: "specimen",
+                    attributes: ["id", "specimenname"],
+                    required: false,
+                  },
+                  {
+                    model: DerivedTestComponent,
+                    as: "components",
+                    attributes: ["formula"],
+                    include: [
+                      {
+                        model: Investigation,
+                        as: "childTest",
+                        attributes: ["testname"],
+                        include: [
+                          {
+                            model: Result,
+                            as: "results",
+                            attributes: ["unit"],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          { model: Hospital, as: "hospital", attributes: ["hospitalname"] },
+        ],
+      });
+
+      // Get all unique specimen type IDs from transactions to fetch names
+      const specimenTypeIds = new Set();
+      refreshedPatient.patientTests.forEach((test) => {
+        if (test.specimenTransactions) {
+          test.specimenTransactions.forEach((st) => {
+            if (st.specimen_type && !isNaN(st.specimen_type)) {
+              specimenTypeIds.add(parseInt(st.specimen_type));
+            }
+          });
+        }
+      });
+
+      // Fetch specimen names for all IDs at once
+      const specimenMap = {};
+      if (specimenTypeIds.size > 0) {
+        const specimens = await SpecimenTypeMaster.findAll({
+          where: { id: Array.from(specimenTypeIds) },
+          attributes: ["id", "specimenname"],
+        });
+        specimens.forEach((s) => {
+          specimenMap[s.id] = s.specimenname;
+        });
+      }
+
+      // Group tests by specimen type
+      const groupedBySpecimen = {};
+
+      refreshedPatient.patientTests.forEach((test) => {
+        const investigation = test.investigation;
+        if (!investigation) return;
+
+        // Use specimen association if available, otherwise fall back to sampletypeId
+        const specimenId =
+          investigation.specimen?.id || investigation.sampletypeId || "unknown";
+        const specimenName =
+          investigation.specimen?.specimenname ||
+          specimenMap[specimenId] ||
+          `Specimen ${specimenId}`;
+
+        if (!groupedBySpecimen[specimenId]) {
+          groupedBySpecimen[specimenId] = {
+            specimen_type_id: specimenId,
+            specimen_name: specimenName,
+            tests: [],
+            specimens: [],
+            addedSpecimenIds: new Set(), // Track added specimen IDs to prevent duplicates
+          };
+        }
+
+        // Add test investigation details
+        groupedBySpecimen[specimenId].tests.push({
+          test_id: test.id,
+          test_name: investigation.testname,
+          test_method: investigation.testmethod,
+          sample_qty: investigation.sampleqty,
+          container_type: investigation.containertype,
+          department: investigation.department?.dptname,
+          status: test.status,
+          collect_later_reason: test.collect_later_reason,
+          order_id: test.order_id,
+        });
+
+        // Add related specimen transactions (only for this specimen type)
+        if (test.specimenTransactions && test.specimenTransactions.length > 0) {
+          test.specimenTransactions.forEach((specimen) => {
+            const specTypeId =
+              specimen.specimen_type && !isNaN(specimen.specimen_type)
+                ? parseInt(specimen.specimen_type)
+                : specimen.specimen_type;
+
+            // Only add if specimen transaction matches this group's specimen type (prevent duplicates)
+            if (
+              specTypeId == specimenId &&
+              !groupedBySpecimen[specimenId].addedSpecimenIds.has(specimen.id)
+            ) {
+              groupedBySpecimen[specimenId].specimens.push({
+                id: specimen.id,
+                barcode: specimen.barcode_value,
+                specimen_type_id: specTypeId,
+                specimen_type_name:
+                  specimenMap[specTypeId] || specimen.specimen_type,
+                tube_type: specimen.tube_type,
+                status: specimen.status,
+              });
+              // Mark this specimen as added
+              groupedBySpecimen[specimenId].addedSpecimenIds.add(specimen.id);
+            }
+          });
+        }
+      });
+
+      // Convert to array and remove the tracking Set
+      const groupedData = Object.values(groupedBySpecimen).map((group) => {
+        const { addedSpecimenIds, ...rest } = group;
+        return rest;
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          patient: {
+            id: refreshedPatient.id,
+            name: refreshedPatient.p_name,
+            lname: refreshedPatient.p_lname,
+            age: refreshedPatient.p_age,
+            gender: refreshedPatient.p_gender,
+            uhid: refreshedPatient.uhid,
+            status: refreshedPatient.p_status,
+            hospital: refreshedPatient.hospital?.hospitalname,
+            pppMode: refreshedPatient.patientPPModes,
+          },
+          grouped_by_specimen: groupedData,
+        },
+      });
+    }
+
     return res.status(200).json({ success: true, data: patient });
   } catch (error) {
+    console.error("Get Test Data By ID Error:", error);
     return res.status(500).json({
       success: false,
-      message: `Something went wrong while fetching patient ${error}`,
+      message: `Something went wrong while fetching patient ${error.message}`,
     });
   }
 };
@@ -374,7 +636,8 @@ const generateBarcode = async (req, res) => {
 };
 
 /**
- * @description Mark test as 'collected' or 'collect_later' for PPP or Bill mode.
+ * @description Mark test(s) as 'collected' or 'pending' for PPP or Bill mode.
+ * Supports bulk updates - accepts array of test IDs.
  * Restricted to Reception and Phlebotomist roles for their own hospital.
  */
 const collectSample = async (req, res) => {
@@ -392,8 +655,16 @@ const collectSample = async (req, res) => {
     }
 
     // 2. Extract identifiers and body
-    const { pid, testid } = req.params;
-    const { action, remark } = req.body;
+    const { pid } = req.params;
+    const { testIds, action, remark } = req.body;
+
+    // Validate inputs
+    if (!testIds || !Array.isArray(testIds) || testIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "testIds array is required and must not be empty.",
+      });
+    }
 
     if (!action || !["collect", "pending"].includes(action)) {
       return res.status(400).json({
@@ -402,23 +673,7 @@ const collectSample = async (req, res) => {
       });
     }
 
-    // 3. Find the test record
-    const patientTest = await PatientTest.findOne({
-      where: {
-        id: testid,
-        pid: pid,
-        hospitalid: userHospitalId,
-      },
-    });
-
-    if (!patientTest) {
-      return res.status(404).json({
-        success: false,
-        message: "Test record not found or unauthorized access.",
-      });
-    }
-
-    // 4. Validation: Only Phlebotomist can mark pending
+    // 3. Validation: Only Phlebotomist can mark pending
     if (action === "pending" && normalizedRole !== "phlebotomist") {
       return res.status(403).json({
         success: false,
@@ -426,8 +681,32 @@ const collectSample = async (req, res) => {
       });
     }
 
-    // 5. Logic based on action
+    // 4. Find all test records
+    const patientTests = await PatientTest.findAll({
+      where: {
+        id: testIds,
+        pid: pid,
+        hospitalid: userHospitalId,
+      },
+    });
+
+    if (patientTests.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No test records found or unauthorized access.",
+      });
+    }
+
+    if (patientTests.length !== testIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: `Found ${patientTests.length} tests out of ${testIds.length} requested. Some test IDs are invalid.`,
+      });
+    }
+
     const currentTime = new Date();
+    const updateData = {};
+    const errors = [];
 
     if (action === "collect") {
       // Barcode Generation Checks
@@ -444,43 +723,63 @@ const collectSample = async (req, res) => {
         });
       }
 
-      // 2️⃣ Order must exist
-      if (!patientTest.order_id) {
+      // 2️⃣ Validate each test
+      for (const test of patientTests) {
+        // Check if order exists
+        if (!test.order_id) {
+          errors.push(`Test ${test.id}: Order not linked`);
+          continue;
+        }
+
+        // Check if barcode exists
+        const barcodeExists = await SpecimenTransaction.findOne({
+          where: { order_id: test.order_id },
+        });
+
+        if (!barcodeExists) {
+          errors.push(`Test ${test.id}: Barcode not generated`);
+          continue;
+        }
+
+        // Check valid status
+        const validStatusesForCollect = ["center", "pending"];
+        if (!validStatusesForCollect.includes(test.status)) {
+          errors.push(`Test ${test.id}: Invalid status '${test.status}'`);
+        }
+      }
+
+      if (errors.length > 0) {
         return res.status(400).json({
           success: false,
-          message: "Order not linked to test. Barcode cannot be validated.",
+          message: "Validation failed for some tests",
+          errors: errors,
         });
       }
 
-      // 3️⃣ Barcode must exist
-      const barcodeExists = await SpecimenTransaction.findOne({
-        where: {
-          order_id: patientTest.order_id,
+      // Perform bulk update
+      const [updatedCount] = await PatientTest.update(
+        {
+          status: "collected",
+          sample_collected_time: currentTime,
+          collected_by: req.user.username,
+          collect_later_reason: null,
+          collect_later_marked_at: null,
         },
+        {
+          where: {
+            id: testIds,
+            pid: pid,
+            hospitalid: userHospitalId,
+            status: { [Op.in]: ["center", "pending"] },
+          },
+        },
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: `${updatedCount} sample(s) marked as collected.`,
+        updated: updatedCount,
       });
-
-      if (!barcodeExists) {
-        return res.status(400).json({
-          success: false,
-          message: "Barcode not generated. Please generate barcode first.",
-        });
-      }
-
-      // Transition: verified -> collected OR pending -> collected
-      const validStatusesForCollect = ["center", "pending"];
-      if (!validStatusesForCollect.includes(patientTest.status)) {
-        return res.status(400).json({
-          success: false,
-          message: `Cannot collect sample. Current status is ${patientTest.status}.`,
-        });
-      }
-
-      patientTest.status = "collected";
-      patientTest.sample_collected_time = currentTime;
-      patientTest.collected_by = req.user.username;
-      // Clear collect_later fields if previously set
-      patientTest.collect_later_reason = null;
-      patientTest.collect_later_marked_at = null;
     } else if (action === "pending") {
       // Remark is mandatory
       if (!remark || remark.trim() === "") {
@@ -490,17 +789,39 @@ const collectSample = async (req, res) => {
         });
       }
 
-      // Transition: verified (center) -> pending
-      if (patientTest.status !== "center") {
+      // Validate status for pending
+      for (const test of patientTests) {
+        if (test.status !== "center") {
+          errors.push(
+            `Test ${test.id}: Cannot mark for later collection. Current status is ${test.status}`,
+          );
+        }
+      }
+
+      if (errors.length > 0) {
         return res.status(400).json({
           success: false,
-          message: `Cannot mark for later collection. Current status is ${patientTest.status}.`,
+          message: "Validation failed for some tests",
+          errors: errors,
         });
       }
 
-      patientTest.status = "pending";
-      patientTest.collect_later_reason = remark;
-      patientTest.collect_later_marked_at = currentTime;
+      // Perform bulk update
+      const [updatedCount] = await PatientTest.update(
+        {
+          status: "pending",
+          collect_later_reason: remark,
+          collect_later_marked_at: currentTime,
+        },
+        {
+          where: {
+            id: testIds,
+            pid: pid,
+            hospitalid: userHospitalId,
+            status: "center",
+          },
+        },
+      );
 
       // Set patient reverification status to 'default' when marking for later collection
       const patient = await Patient.findByPk(pid);
@@ -508,16 +829,13 @@ const collectSample = async (req, res) => {
         patient.reverification_status = "default";
         await patient.save();
       }
+
+      return res.status(200).json({
+        success: true,
+        message: `${updatedCount} sample(s) marked for later collection.`,
+        updated: updatedCount,
+      });
     }
-
-    await patientTest.save();
-
-    return res.status(200).json({
-      success: true,
-      message: `Sample marked as ${
-        action === "collect" ? "collected" : "collect later"
-      }.`,
-    });
   } catch (error) {
     console.error("Collection Error:", error);
     return res.status(500).json({
@@ -533,7 +851,7 @@ const collectSample = async (req, res) => {
 const checkBarcodePrintStatus = async (req, res) => {
   try {
     const { hospitalid: hospitalId } = req.user;
-    const { barcode } = req.params;
+    const { barcode } = req.query;
 
     if (!barcode) {
       return res
@@ -857,5 +1175,5 @@ module.exports = {
   sendToNodal,
   logBarcodePrint,
   checkBarcodePrintStatus,
-  generateBarcode
+  generateBarcode,
 };

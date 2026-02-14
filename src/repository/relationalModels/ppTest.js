@@ -9,7 +9,7 @@ const PPModeTest = sequelize.define(
     popno: { type: DataTypes.STRING, unique: true },
     pscheme: { type: DataTypes.STRING },
     refdoc: { type: DataTypes.STRING },
-    pbarcode: { type: DataTypes.STRING, allowNull: false, unique: true },
+    // pbarcode: { type: DataTypes.STRING, allowNull: false, unique: true },
     trfno: { type: DataTypes.INTEGER, allowNull: true, unique: true },
     remark: { type: DataTypes.STRING, allowNull: false },
     attatchfile: { type: DataTypes.STRING },

@@ -47,10 +47,10 @@ router.route("/verify-patient/:pid").put(verifyPatient);
 router.route("/reverify-patient/:pid").put(reverifyPatient);
 // 4. Get Verified Patient Test Data
 router.route("/get-verified-patient").get(getVerifiedTestData);
-// 5. Get test data by id
+// 5. Get test data by id (also genarates barcode)
 router.route("/get-test-data-byid/:pid").get(getTestDataById);
-// 6. Update to Collect Test (Supports action: collect | collect_later)
-router.route("/collect-test/:pid/tests/:testid").put(collectSample);
+// 6. Update to Collect Test (Supports action: collect | pending) - Accepts array of test IDs
+router.route("/collect-test/:pid").put(collectSample);
 // 7. Pending Collection Page
 router.route("/pending-collection").get(getPendingCollection);
 // 8. Show collected sample
@@ -61,7 +61,7 @@ router.route("/send-sample-nodal").put(sendToNodal);
 router.route("/log-barcode-print").post(logBarcodePrint);
 // 10. Check Barcode Print Status
 router
-  .route("/barcodes/:barcode/check-print-status")
+  .route("/barcodes/check-print-status")
   .get(checkBarcodePrintStatus);
 // 11. Generate Barcode
 router.route("/generate-barcode/:orderId").post(generateBarcode);
