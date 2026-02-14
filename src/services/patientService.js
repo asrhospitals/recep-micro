@@ -45,7 +45,7 @@ async function getPatientTestData({ hospitalId }, queryParams) {
       { p_lname: { [Op.iLike]: `%${searchKey}%` } },
       { uhid: { [Op.iLike]: `%${searchKey}%` } },
       { p_mobile: { [Op.iLike]: `%${searchKey}%` } },
-      { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
+      // { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
       { "$hospital.hospitalname$": { [Op.iLike]: `%${searchKey}%` } },
       { p_status: { [Op.iLike]: `%${searchKey}%` } },
     ];
@@ -171,7 +171,7 @@ async function getCollectedData({ hospitalId }, queryParams) {
       { p_lname: { [Op.iLike]: `%${searchKey}%` } },
       { uhid: { [Op.iLike]: `%${searchKey}%` } },
       { p_mobile: { [Op.iLike]: `%${searchKey}%` } },
-      { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
+      // { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
       { "$hospital.hospitalname$": { [Op.iLike]: `%${searchKey}%` } },
       { p_status: { [Op.iLike]: `%${searchKey}%` } },
     ];
@@ -268,7 +268,7 @@ async function getPendingCollection({ hospitalId }, queryParams) {
       { p_lname: { [Op.iLike]: `%${searchKey}%` } },
       { uhid: { [Op.iLike]: `%${searchKey}%` } },
       { p_mobile: { [Op.iLike]: `%${searchKey}%` } },
-      { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
+      // { "$patientPPModes.pbarcode$": { [Op.iLike]: `%${searchKey}%` } },
     ];
     if (!isNaN(searchKey)) {
       searchConditions.push({ id: parseInt(searchKey) });
