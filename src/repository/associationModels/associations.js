@@ -62,8 +62,16 @@ Nodal.hasMany(PatientTest, { foreignKey: "nodalid", as: "nodalTests" });
 PatientTest.belongsTo(Nodal, { foreignKey: "nodalid", as: "nodal" });
 
 // 9. Investigation → SampleType (Specimen)
-Investigation.belongsTo(Specimen, { foreignKey: "sampletypeId" });
-Specimen.hasMany(Investigation, { foreignKey: "sampletypeId" });
+Investigation.belongsTo(Specimen, {
+  foreignKey: "sampletypeId",
+  targetKey: "id",
+  as: "specimen",
+});
+Specimen.hasMany(Investigation, {
+  foreignKey: "sampletypeId",
+  sourceKey: "id",
+  as: "investigations",
+});
 
 // Patient ↔ Investigation (many-to-many via PatientTest)
 Patient.belongsToMany(Investigation, {
@@ -147,12 +155,27 @@ SpecimenTest.belongsTo(SpecimenTransaction, {
   foreignKey: "specimen_id",
 });
 
-PatientTest.hasMany(SpecimenTest, {
-  foreignKey: "patient_test_id",
+Investigation.hasMany(SpecimenTest, {
+  foreignKey: "investigation_id",
 });
 
-SpecimenTest.belongsTo(PatientTest, {
-  foreignKey: "patient_test_id",
+SpecimenTest.belongsTo(Investigation, {
+  foreignKey: "investigation_id",
+});
+
+// PatientTest ↔ SpecimenTransaction (via order_id)
+PatientTest.hasMany(SpecimenTransaction, {
+  foreignKey: "order_id",
+  sourceKey: "order_id",
+  as: "specimenTransactions",
+});
+SpecimenTransaction.hasMany(PatientTest, {
+  foreignKey: "order_id",
+  sourceKey: "order_id",
+});
+
+SpecimenTransaction.hasMany(SpecimenTest, {
+  foreignKey: "specimen_id",
 });
 
 // BarcodeTraceability Associations
@@ -189,4 +212,5 @@ module.exports = {
   BarcodeTraceability,
   SpecimenTest,
   SpecimenTransaction,
+  Specimen,
 };
