@@ -1132,7 +1132,7 @@ const sendToNodal = async (req, res) => {
     // 3. Perform Bulk Update
     const [updatedCount] = await PatientTest.update(
       {
-        status: "intransit",
+        status: "technician",
         dispatch_time: new Date(),
       },
       {
