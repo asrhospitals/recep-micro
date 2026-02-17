@@ -1113,7 +1113,7 @@ const sendToNodal = async (req, res) => {
     const { roleType, hospitalid: userHospitalId } = req.user;
     const { ids } = req.body;
 
-    // 1. Validation
+    // 1.Validation
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return res
         .status(400)
