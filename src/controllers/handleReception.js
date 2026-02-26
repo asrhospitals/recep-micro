@@ -15,7 +15,7 @@ const { generateSpecimens } = require("../services/barcode.service");
 
 const patientService = require("../services/patientService");
 const { Op } = require("sequelize");
-
+const { formatString } = require("../utils/utils");
 /**
  * @description Retrieves test-specific patient data (PPP mode and Bill mode).
  * Restricted strictly to Reception and Phlebotomist roles for their own hospital.
@@ -256,7 +256,7 @@ const getTestDataById = async (req, res) => {
 
     /* Find Patient By Id */
     const patient = await Patient.findOne({
-      where: { id: pid, p_regdate: today, p_status: "verified" },
+      where: { id: pid, p_status: "verified" },
       attributes: [
         "id",
         "p_name",
@@ -354,7 +354,7 @@ const getTestDataById = async (req, res) => {
       });
     }
 
-    if (patient && patient.patientTests && patient.patientTests.length > 0) {
+    if (patient && patient?.patientTests && patient.patientTests.length > 0) {
       // ==================== GENERATE BARCODES ====================
       // Get unique order IDs from patient tests
       const orderIds = [
@@ -375,7 +375,7 @@ const getTestDataById = async (req, res) => {
           // Generate only if no barcodes exist
           if (!existingBarcodes) {
             try {
-              await generateSpecimens(orderId, userHospitalId);
+              await generateSpecimens(orderId, userHospitalId, pid);
               console.log(`Barcodes generated for order ${orderId}`);
             } catch (barcodeError) {
               console.error(
@@ -392,7 +392,7 @@ const getTestDataById = async (req, res) => {
       // ==================== FETCH GROUPED DATA ====================
       // Refresh patient data to include newly generated barcodes
       const refreshedPatient = await Patient.findOne({
-        where: { id: pid, p_regdate: today, p_status: "verified" },
+        where: { id: pid, p_status: "verified" },
         attributes: [
           "id",
           "p_name",
@@ -485,97 +485,100 @@ const getTestDataById = async (req, res) => {
 
       // Get all unique specimen type IDs from transactions to fetch names
       const specimenTypeIds = new Set();
-      refreshedPatient.patientTests.forEach((test) => {
-        if (test.specimenTransactions) {
-          test.specimenTransactions.forEach((st) => {
-            if (st.specimen_type && !isNaN(st.specimen_type)) {
-              specimenTypeIds.add(parseInt(st.specimen_type));
-            }
+      const specimenMap = {};
+      const groupedBySpecimen = {};
+
+      if (refreshedPatient) {
+        refreshedPatient.patientTests.forEach((test) => {
+          if (test.specimenTransactions) {
+            test.specimenTransactions.forEach((st) => {
+              if (st.specimen_type && !isNaN(st.specimen_type)) {
+                specimenTypeIds.add(parseInt(st.specimen_type));
+              }
+            });
+          }
+        });
+
+        // Fetch specimen names for all IDs at once
+        if (specimenTypeIds.size > 0) {
+          const specimens = await SpecimenTypeMaster.findAll({
+            where: { id: Array.from(specimenTypeIds) },
+            attributes: ["id", "specimenname"],
+          });
+          specimens.forEach((s) => {
+            specimenMap[s.id] = s.specimenname;
           });
         }
-      });
 
-      // Fetch specimen names for all IDs at once
-      const specimenMap = {};
-      if (specimenTypeIds.size > 0) {
-        const specimens = await SpecimenTypeMaster.findAll({
-          where: { id: Array.from(specimenTypeIds) },
-          attributes: ["id", "specimenname"],
-        });
-        specimens.forEach((s) => {
-          specimenMap[s.id] = s.specimenname;
+        // Group tests by specimen type
+
+        refreshedPatient.patientTests.forEach((test) => {
+          const investigation = test.investigation;
+          if (!investigation) return;
+
+          // Use specimen association if available, otherwise fall back to sampletypeId
+          const specimenId =
+            investigation.specimen?.id || investigation.sampletypeId || "unknown";
+          const specimenName =
+            investigation.specimen?.specimenname ||
+            specimenMap[specimenId] ||
+            `Specimen ${specimenId}`;
+
+          if (!groupedBySpecimen[specimenId]) {
+            groupedBySpecimen[specimenId] = {
+              specimen_type_id: specimenId,
+              specimen_name: specimenName,
+              tests: [],
+              specimens: [],
+              addedSpecimenIds: new Set(), // Track added specimen IDs to prevent duplicates
+            };
+          }
+
+          // Add test investigation details
+          groupedBySpecimen[specimenId].tests.push({
+            test_id: test.id,
+            test_name: investigation.testname,
+            test_method: investigation.testmethod,
+            sample_qty: investigation.sampleqty,
+            container_type: investigation.containertype,
+            department: investigation.department?.dptname,
+            status: test.status,
+            collect_later_reason: test.collect_later_reason,
+            order_id: test.order_id,
+          });
+
+          // Add related specimen transactions (only for this specimen type)
+          if (test.specimenTransactions && test.specimenTransactions.length > 0) {
+            test.specimenTransactions.forEach((specimen) => {
+              const specTypeId =
+                specimen.specimen_type && !isNaN(specimen.specimen_type)
+                  ? parseInt(specimen.specimen_type)
+                  : specimen.specimen_type;
+
+              // Only add if specimen transaction matches this group's specimen type (prevent duplicates)
+              if (
+                specTypeId == specimenId &&
+                !groupedBySpecimen[specimenId].addedSpecimenIds.has(specimen.id)
+              ) {
+                groupedBySpecimen[specimenId].specimens.push({
+                  id: specimen.id,
+                  barcode: specimen.barcode_value,
+                  specimen_type_id: specTypeId,
+                  specimen_type_name:
+                    specimenMap[specTypeId] || specimen.specimen_type,
+                  tube_type: specimen.tube_type,
+                  status: specimen.status,
+                });
+                // Mark this specimen as added
+                groupedBySpecimen[specimenId].addedSpecimenIds.add(specimen.id);
+              }
+            });
+          }
         });
       }
 
-      // Group tests by specimen type
-      const groupedBySpecimen = {};
-
-      refreshedPatient.patientTests.forEach((test) => {
-        const investigation = test.investigation;
-        if (!investigation) return;
-
-        // Use specimen association if available, otherwise fall back to sampletypeId
-        const specimenId =
-          investigation.specimen?.id || investigation.sampletypeId || "unknown";
-        const specimenName =
-          investigation.specimen?.specimenname ||
-          specimenMap[specimenId] ||
-          `Specimen ${specimenId}`;
-
-        if (!groupedBySpecimen[specimenId]) {
-          groupedBySpecimen[specimenId] = {
-            specimen_type_id: specimenId,
-            specimen_name: specimenName,
-            tests: [],
-            specimens: [],
-            addedSpecimenIds: new Set(), // Track added specimen IDs to prevent duplicates
-          };
-        }
-
-        // Add test investigation details
-        groupedBySpecimen[specimenId].tests.push({
-          test_id: test.id,
-          test_name: investigation.testname,
-          test_method: investigation.testmethod,
-          sample_qty: investigation.sampleqty,
-          container_type: investigation.containertype,
-          department: investigation.department?.dptname,
-          status: test.status,
-          collect_later_reason: test.collect_later_reason,
-          order_id: test.order_id,
-        });
-
-        // Add related specimen transactions (only for this specimen type)
-        if (test.specimenTransactions && test.specimenTransactions.length > 0) {
-          test.specimenTransactions.forEach((specimen) => {
-            const specTypeId =
-              specimen.specimen_type && !isNaN(specimen.specimen_type)
-                ? parseInt(specimen.specimen_type)
-                : specimen.specimen_type;
-
-            // Only add if specimen transaction matches this group's specimen type (prevent duplicates)
-            if (
-              specTypeId == specimenId &&
-              !groupedBySpecimen[specimenId].addedSpecimenIds.has(specimen.id)
-            ) {
-              groupedBySpecimen[specimenId].specimens.push({
-                id: specimen.id,
-                barcode: specimen.barcode_value,
-                specimen_type_id: specTypeId,
-                specimen_type_name:
-                  specimenMap[specTypeId] || specimen.specimen_type,
-                tube_type: specimen.tube_type,
-                status: specimen.status,
-              });
-              // Mark this specimen as added
-              groupedBySpecimen[specimenId].addedSpecimenIds.add(specimen.id);
-            }
-          });
-        }
-      });
-
       // Convert to array and remove the tracking Set
-      const groupedData = Object.values(groupedBySpecimen).map((group) => {
+      const groupedData = groupedBySpecimen && Object.values(groupedBySpecimen).map((group) => {
         const { addedSpecimenIds, ...rest } = group;
         return rest;
       });
@@ -620,7 +623,7 @@ const generateBarcode = async (req, res) => {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    const result = await generateSpecimens(orderId, hospitalid);
+    const result = await generateSpecimens(orderId, hospitalid, null);
 
     return res.status(200).json({
       success: true,
@@ -935,7 +938,7 @@ const logBarcodePrint = async (req, res) => {
     });
 
     if (!log) {
-      log = await BarcodeTraceability.create(
+      const result = await BarcodeTraceability.create(
         {
           barcode: pbarcode,
           pid,
@@ -950,18 +953,28 @@ const logBarcodePrint = async (req, res) => {
         },
         { transaction: t },
       );
+
+      const barcodeWithoutUHID = result && result?.barcode && formatString(result.barcode);
+
+      log = {
+        ...result.toJSON(),
+        barcode: barcodeWithoutUHID && barcodeWithoutUHID.replace(/-/g, "").toUpperCase(),
+      }
     } else {
       // Throttling: Check if this is a duplicate call within a 5-second window
       const now = new Date();
       const lastUpdate = new Date(log.updatedAt);
       const diffSeconds = (now - lastUpdate) / 1000;
-
+      const barcodeWithoutUHID = log?.barcode && formatString(log?.barcode);
       if (diffSeconds < 5) {
         await t.commit();
         return res.json({
           success: true,
           message: "Print event already logged recently",
-          data: log,
+          data: {
+            ...log.toJSON(),
+            barcode: barcodeWithoutUHID && barcodeWithoutUHID.replace(/-/g, "").toUpperCase(),
+          },
           throttled: true,
         });
       }
@@ -989,11 +1002,14 @@ const logBarcodePrint = async (req, res) => {
 
     await t.commit();
     await log.reload();
-
+    const barcodeWithoutUHID = log?.barcode && formatString(log?.barcode);
     return res.json({
       success: true,
       message: "Print event logged successfully",
-      data: log,
+      data: {
+        ...log.toJSON(),
+        barcode: barcodeWithoutUHID && barcodeWithoutUHID.replace(/-/g, "").toUpperCase(),
+      },
     });
   } catch (error) {
     await t.rollback();
