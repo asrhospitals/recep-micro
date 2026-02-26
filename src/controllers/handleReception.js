@@ -524,8 +524,10 @@ const getTestDataById = async (req, res) => {
             specimenMap[specimenId] ||
             `Specimen ${specimenId}`;
 
-          if (!groupedBySpecimen[specimenId]) {
-            groupedBySpecimen[specimenId] = {
+          const groupId = `${specimenId}_${investigation.containertype}`;
+
+          if (!groupedBySpecimen[groupId]) {
+            groupedBySpecimen[groupId] = {
               specimen_type_id: specimenId,
               specimen_name: specimenName,
               tests: [],
@@ -535,7 +537,7 @@ const getTestDataById = async (req, res) => {
           }
 
           // Add test investigation details
-          groupedBySpecimen[specimenId].tests.push({
+          groupedBySpecimen[groupId].tests.push({
             test_id: test.id,
             test_name: investigation.testname,
             test_method: investigation.testmethod,
@@ -547,7 +549,7 @@ const getTestDataById = async (req, res) => {
             order_id: test.order_id,
           });
 
-          // Add related specimen transactions (only for this specimen type)
+          // Add related specimen transactions (only for this specimen type and tube type)
           if (test.specimenTransactions && test.specimenTransactions.length > 0) {
             test.specimenTransactions.forEach((specimen) => {
               const specTypeId =
@@ -555,12 +557,13 @@ const getTestDataById = async (req, res) => {
                   ? parseInt(specimen.specimen_type)
                   : specimen.specimen_type;
 
-              // Only add if specimen transaction matches this group's specimen type (prevent duplicates)
+              // Only add if specimen transaction matches this group's specimen type and tube type
               if (
                 specTypeId == specimenId &&
-                !groupedBySpecimen[specimenId].addedSpecimenIds.has(specimen.id)
+                specimen.tube_type === investigation.containertype &&
+                !groupedBySpecimen[groupId].addedSpecimenIds.has(specimen.id)
               ) {
-                groupedBySpecimen[specimenId].specimens.push({
+                groupedBySpecimen[groupId].specimens.push({
                   id: specimen.id,
                   barcode: specimen.barcode_value,
                   specimen_type_id: specTypeId,
@@ -570,7 +573,7 @@ const getTestDataById = async (req, res) => {
                   status: specimen.status,
                 });
                 // Mark this specimen as added
-                groupedBySpecimen[specimenId].addedSpecimenIds.add(specimen.id);
+                groupedBySpecimen[groupId].addedSpecimenIds.add(specimen.id);
               }
             });
           }

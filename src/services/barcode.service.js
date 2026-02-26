@@ -213,7 +213,7 @@ const generateSpecimens = async (orderId, hospitalId, pid) => {
           await SpecimenTest.bulkCreate(
             chunkTests.map((inv) => ({
               specimen_id: specimen.id,
-              investigation_id: inv.id,
+              investigation_id: inv.investigation_id || (inv.investigation ? inv.investigation.id : inv.id),
             })),
             { transaction: tx },
           );
