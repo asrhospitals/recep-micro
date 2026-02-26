@@ -9,6 +9,8 @@ const Investigation = require("../repository/relationalModels/investigation");
 const SpecimenTransaction = require("../repository/relationalModels/specimenTransaction");
 const SpecimenTest = require("../repository/relationalModels/specimenTestModel");
 const TubeMaster = require("../repository/relationalModels/tubeMaster");
+const Accession = require("../repository/relationalModels/accessionMaster");
+const Hospital = require("../repository/relationalModels/hospital");
 
 // -------------------- HELPERS --------------------
 const ddmmyy = (d) => {
@@ -20,41 +22,86 @@ const ddmmyy = (d) => {
   );
 };
 
-const checkDigit = (s) =>
-  s
-    .replace(/\D/g, "")
-    .split("")
-    .reduce((a, b) => a + Number(b), 0) % 10;
+function checkDigit(barcode) {
+  // Remove hyphens
+  const clean = barcode.replace(/-/g, "").toUpperCase();
+  // Convert letters to numbers
+  let numericString = "";
 
-const getAccession = async (orderId) =>
-  `ACN${String(orderId).padStart(5, "0")}`;
+  for (let char of clean) {
+    if (/[A-Z]/.test(char)) {
+      numericString += char.charCodeAt(0) - 55;
+      // A=65 → 10 (65-55)
+    } else if (/[0-9]/.test(char)) {
+      numericString += char;
+    }
+  }
+
+  // Convert to single digit array
+  const digits = numericString.split("").map(Number);
+  //Apply Luhn from RIGHT
+  let sum = 0;
+  let shouldDouble = false;
+
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let digit = digits[i];
+
+    if (shouldDouble) {
+      digit *= 2;
+      if (digit > 9) {
+        digit -= 9; // same as adding digits
+      }
+    }
+
+    sum += digit;
+    shouldDouble = !shouldDouble;
+  }
+  console.log("Luhn sum before modulo:", sum);
+  //Calculate check digit
+  return (10 - (sum % 10)) % 10;
+}
 
 // -------------------- MAIN --------------------
-const generateSpecimens = async (orderId, hospitalId) => {
+const generateSpecimens = async (orderId, hospitalId, pid) => {
   const tx = await sequelize.transaction();
   try {
-    /* 1️⃣ Order */
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Asia/Kolkata",
+    });
+
+    /* Order */
+    const maxOrderNumber = await Order.max("daily_order_number", {
+      where: {
+        hospitalid: hospitalId,
+        order_date: today,
+      },
+      transaction: tx,
+    });
+
+    if (!maxOrderNumber) throw new Error("Max  umber of orders not found");
+
     const order = await Order.findOne({
       where: { id: orderId, hospitalid: hospitalId },
       transaction: tx,
     });
+
     if (!order) throw new Error("Order not found");
 
-    /* 2️⃣ Verified Patient */
+    const hospital = await Hospital.findOne({
+      where: { id: hospitalId, isactive: true },
+      transaction: tx,
+    });
+    if (!hospital) throw new Error("Hospital not verified");
+
+
+    /* Verified Patient */
     const patient = await Patient.findOne({
-      where: { id: order.pid, p_status: "verified" },
+      where: { id: pid, p_status: "verified" },
       transaction: tx,
     });
     if (!patient) throw new Error("Patient not verified");
 
-    /* 3️⃣ Prevent duplicate barcode */
-    const exists = await SpecimenTransaction.findOne({
-      where: { order_id: orderId },
-      transaction: tx,
-    });
-    if (exists) throw new Error("Barcode already generated");
-
-    /* 4️⃣ Fetch tests */
+    /* Fetch tests */
     const tests = await PatientTest.findAll({
       where: {
         order_id: orderId,
@@ -65,7 +112,15 @@ const generateSpecimens = async (orderId, hospitalId) => {
     });
     if (!tests.length) throw new Error("No tests found");
 
-    /* 5️⃣ Group by specimen + tube */
+    const accessionFields = await Accession.findAll({
+      where: { is_add: true },
+      order: [['id', 'ASC']],
+      transaction: tx,
+    });
+
+    if (accessionFields && accessionFields.length === 0) throw new Error("No accession master found");
+
+    /* Group by specimen + tube */
     const groups = {};
     for (const t of tests) {
       const inv = t.investigation;
@@ -83,8 +138,6 @@ const generateSpecimens = async (orderId, hospitalId) => {
       groups[key].tests.push(t);
     }
 
-    /* 6️⃣ Create tubes + barcodes (capacity-aware) */
-    const accession = await getAccession(orderId);
     const barcodes = [];
     let tubeSeq = 0;
 
@@ -100,20 +153,46 @@ const generateSpecimens = async (orderId, hospitalId) => {
 
       const maxPerTube = tubeMaster.maxttest;
 
-      // 🔑 SPLIT TESTS BY CAPACITY
+      //SPLIT TESTS BY CAPACITY
       for (let i = 0; i < group.tests.length; i += maxPerTube) {
         tubeSeq++;
 
-        const base = `${patient.uhid}-${ddmmyy(
-          group.tests[0].createdAt,
-        )}-${order.daily_order_number}-${String(tubeSeq).padStart(
-          2,
-          "0",
-        )}-${String(hospitalId).padStart(2, "0")}`;
+        const parts = [];
 
+        for (const field of accessionFields) {
+          switch (field.name) {
+            case "Center Name":
+              parts.push(hospital.hospitalname && hospital.hospitalname.slice(0, 3) || "AGT");
+              break;
+            case "UHID":
+              parts.push(patient.uhid);
+              break;
+            case "Date (ddmmyy)":
+              parts.push(ddmmyy(today));
+              break;
+            case "Daily Order":
+              parts.push(String(maxOrderNumber || 0).padStart(5, "0"));
+              break;
+            case "Tube Sequence":
+              parts.push(String(tubeSeq).padStart(2, "0"));
+              break;
+            // case "Patient Name":
+            //   parts.push(patient.name);
+            //   break;
+
+            // case "Test Short Names":
+            //   const shortNames = group.tests
+            //     .slice(i, i + maxPerTube)
+            //     .map(t => t.investigation.shortname)
+            //     .join("");
+            //   parts.push(shortNames);
+            //   break;
+          }
+        }
+        const base = parts.join("-");
         const barcode = `${base}-${checkDigit(base)}`;
-
         const chunkTests = group.tests.slice(i, i + maxPerTube);
+
         const specimen = await SpecimenTransaction.create(
           {
             pid: patient.id,
@@ -124,19 +203,21 @@ const generateSpecimens = async (orderId, hospitalId) => {
             status: "CREATED",
             specimen_type: group.specimen_type,
             tube_type: group.tube_type,
-            collection_timepoint: group.collection_timepoint,
+            collection_timepoint: group.collection_timepoint
           },
           { transaction: tx },
         );
 
         // MAP TESTS TO THIS TUBE
-        await SpecimenTest.bulkCreate(
-          chunkTests.map((inv) => ({
-            specimen_id: specimen.id,
-            investigation_id: inv.id,
-          })),
-          { transaction: tx },
-        );
+        if (specimen && specimen.id) {
+          await SpecimenTest.bulkCreate(
+            chunkTests.map((inv) => ({
+              specimen_id: specimen.id,
+              investigation_id: inv.id,
+            })),
+            { transaction: tx },
+          );
+        }
 
         barcodes.push(barcode);
       }

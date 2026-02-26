@@ -1,28 +1,37 @@
 const { DataTypes } = require('sequelize');
-const sequelize=require('../../../db/connectDB');
+const sequelize = require("../../config/dbConnection");
 
-
-const Accession= sequelize.define('accession',{
-    id:{
-        type:DataTypes.INTEGER,
-        primaryKey:true,
-        autoIncrement:true
+const Accession = sequelize.define('accession', {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
     },
-    a_year:{
-        type:DataTypes.INTEGER
+    name: {
+        type: DataTypes.STRING
     },
-    a_location_id:{
-        type:DataTypes.INTEGER
+    is_add: {
+        type: DataTypes.BOOLEAN
     },
-    a_container_id:{
-          type:DataTypes.INTEGER
+    sample_data: {
+        type: DataTypes.STRING,
     },
-    a_department:{
-          type:DataTypes.INTEGER
+    is_active: {
+        type: DataTypes.BOOLEAN,
     },
-    a_sample_id:{
-          type:DataTypes.BIGINT,
-          unique:true
+    created_by: {
+        type: DataTypes.STRING,
+    },
+    updated_by: {
+        type: DataTypes.STRING,
     }
+}, {
+    timestamps: true,
+    createdAt: "created_at",
+    updatedAt: "update_at",
+    tableName: "accession",
+    underscored: false
 });
-module.exports=Accession
+
+
+module.exports = Accession
